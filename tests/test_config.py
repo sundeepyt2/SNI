@@ -6,7 +6,7 @@ from sni.config import Config
 
 def test_config_defaults():
     cfg = Config()
-    assert cfg.default_provider == "hianime"
+    assert cfg.default_provider == "allanime"
     assert cfg.quality == "1080"
     assert cfg.player == "mpv"
     assert cfg.selector == "fzf"
@@ -28,7 +28,7 @@ def test_config_load_nonexistent():
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "nope.toml"
         cfg = Config.load(path)
-        assert cfg.default_provider == "hianime"
+    assert cfg.default_provider == "allanime"
 
 
 def test_config_roundtrip_all_fields():

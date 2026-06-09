@@ -20,7 +20,7 @@ else:
 
 
 class Config(BaseModel):
-    default_provider: str = "hianime"
+    default_provider: str = "allanime"
     selector: str = "fzf"
     preview: str = "full"
     icons: bool = True

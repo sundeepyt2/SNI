@@ -15,8 +15,8 @@ def run_wizard(path: Path) -> Config:
 
     default_provider = Prompt.ask(
         "Default provider",
-        choices=["hianime", "animepahe", "allanime"],
-        default="hianime",
+        choices=["allanime", "hianime", "animepahe"],
+        default="allanime",
     )
     selector = Prompt.ask(
         "Search selector",
