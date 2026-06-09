@@ -13,7 +13,8 @@ from pydantic import BaseModel
 from sni.exceptions import ConfigError
 
 if platform.system() == "Windows":
-    DEFAULT_CONFIG_PATH = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "sni" / "config.toml"
+    appdata = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    DEFAULT_CONFIG_PATH = appdata / "sni" / "config.toml"
 else:
     DEFAULT_CONFIG_PATH = Path.home() / ".config" / "sni" / "config.toml"
 

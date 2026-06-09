@@ -70,7 +70,9 @@ class AllAnimeProvider(Provider):
             if use_persisted:
                 payload = {
                     "variables": variables,
-                    "extensions": {"persistedQuery": {"version": 1, "sha256Hash": EPISODE_QUERY_HASH}},
+                    "extensions": {
+                        "persistedQuery": {"version": 1, "sha256Hash": EPISODE_QUERY_HASH}
+                    },
                 }
             else:
                 payload = {"query": query, "variables": variables}
@@ -216,7 +218,6 @@ class AllAnimeProvider(Provider):
 
     @staticmethod
     async def _extract_source(url: str, source_name: str, quality: str) -> Optional[Stream]:
-        source_lower = source_name.lower()
         url_lower = url.lower()
 
         if "mp4upload" in url_lower:

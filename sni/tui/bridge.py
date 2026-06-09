@@ -1,6 +1,5 @@
 import asyncio
 from functools import lru_cache
-from typing import Optional
 
 from sni.config import Config
 from sni.player import Player
