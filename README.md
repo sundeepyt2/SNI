@@ -31,8 +31,11 @@ A terminal-based anime streaming client inspired by [ani-cli](https://github.com
 sudo apt update
 sudo apt install python3 python3-pip mpv fzf
 
-# Install SNI
+# Install SNI (user-only, no sudo required)
 pip install --user sni
+
+# Or system-wide (requires sudo)
+sudo pip install sni
 ```
 
 #### Arch / Manjaro
@@ -41,8 +44,11 @@ pip install --user sni
 # System dependencies
 sudo pacman -S python python-pip mpv fzf
 
-# Install SNI
+# Install SNI (user-only, no sudo required)
 pip install --user sni
+
+# Or system-wide (requires sudo)
+sudo pip install sni
 ```
 
 #### Fedora
@@ -51,8 +57,11 @@ pip install --user sni
 # System dependencies
 sudo dnf install python3 python3-pip mpv fzf
 
-# Install SNI
+# Install SNI (user-only, no sudo required)
 pip install --user sni
+
+# Or system-wide (requires sudo)
+sudo pip install sni
 ```
 
 #### From source (all distros)
@@ -60,7 +69,12 @@ pip install --user sni
 ```bash
 git clone https://github.com/smithmx20/SNI.git
 cd SNI
+
+# User-only install
 pip install --user .
+
+# Or system-wide install
+sudo pip install .
 ```
 
 ---
@@ -75,6 +89,9 @@ brew install mpv fzf
 
 # Install SNI
 pip3 install sni
+
+# Or system-wide (requires sudo)
+sudo pip3 install sni
 ```
 
 #### From source
@@ -82,7 +99,12 @@ pip3 install sni
 ```bash
 git clone https://github.com/smithmx20/SNI.git
 cd SNI
+
+# User-only install
 pip3 install .
+
+# Or system-wide install
+sudo pip3 install .
 ```
 
 ---
