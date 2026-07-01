@@ -40,7 +40,13 @@ jobs:
       contents: write  # Required to upload assets to the GitHub release
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            asset_name: sni-linux
+          - os: macos-latest
+            asset_name: sni-macos
+          - os: windows-latest
+            asset_name: sni-windows.exe
 
     steps:
       - uses: actions/checkout@v4
@@ -59,15 +65,26 @@ jobs:
       - name: Build binary
         run: pyinstaller --onefile --name sni --hidden-import sni.tui.app sni/cli.py
 
+      - name: Rename binary (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mv dist/sni "dist/${{ matrix.asset_name }}"
+          ls -la dist/
+
+      - name: Rename binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Move-Item dist/sni.exe "dist/${{ matrix.asset_name }}"
+          Get-ChildItem dist/
+
       - name: Upload artifact (workflow)
         uses: actions/upload-artifact@v4
         with:
-          name: sni-${{ matrix.os }}
-          path: dist/sni*
+          name: ${{ matrix.asset_name }}
+          path: dist/${{ matrix.asset_name }}
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            dist/sni
-            dist/sni.exe
+          files: dist/${{ matrix.asset_name }}
