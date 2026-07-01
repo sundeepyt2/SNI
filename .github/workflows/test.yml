@@ -1,4 +1,4 @@
-name: Test
+name: CI
 
 on:
   push:
@@ -8,10 +8,13 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: Test (Python ${{ matrix.python-version }} on ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
@@ -31,4 +34,32 @@ jobs:
         run: pytest --cov=sni --cov-report=term-missing
 
       - name: Lint
-        run: pip install ruff && ruff check sni/
+        run: ruff check sni/
+
+  shellcheck:
+    name: Shellcheck install.sh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run ShellCheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          severity: warning
+          additional_paths: install.sh
+
+      - name: Verify install.sh syntax
+        run: bash -n install.sh
+
+  psscriptanalyzer:
+    name: PSScriptAnalyzer install.ps1
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run PSScriptAnalyzer
+        uses: microsoft/psscriptanalyzer-action@v1.1
+        with:
+          path: install.ps1
+          recurse: false
+          severity: warning

@@ -58,6 +58,28 @@ Then re-run the install command.
 
 ---
 
+### Install from PyPI
+
+Once SNI is published to PyPI (after the v1.1.0 release), you can install it with plain pip — no cloning required:
+
+```bash
+# Linux / macOS
+pip install --user sni
+
+# Windows
+pip install sni
+```
+
+This installs the SNI Python package and the `sni` command, but **does not** install `mpv` or `fzf` — install those separately if you don't have them already:
+
+- **Linux**: `sudo apt install mpv fzf` (or your distro's equivalent)
+- **macOS**: `brew install mpv fzf`
+- **Windows**: `winget install mpv.net junegunn.fzf`
+
+For a fully-automatic install (including mpv + fzf), use the one-command installers above instead.
+
+---
+
 ### Install from a local clone
 
 If you've already cloned the repo (or want to hack on SNI), run the installer from the repo root:
