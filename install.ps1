@@ -16,9 +16,7 @@
 
 #Requires -Version 5.1
 [CmdletBinding()]
-param(
-    [switch]$Force
-)
+param()
 
 $ErrorActionPreference = "Stop"
 
@@ -28,7 +26,7 @@ function Write-OK    { param([string]$msg) Write-Host "✓ $msg" -ForegroundColo
 function Write-Warn2 { param([string]$msg) Write-Host "⚠ $msg" -ForegroundColor Yellow }
 function Write-Err2  { param([string]$msg) Write-Host "✗ $msg" -ForegroundColor Red }
 function Write-Sect  { param([string]$msg) Write-Host ""; Write-Host "──[ $msg ]──" -ForegroundColor Cyan }
-function Die         { param([string]$msg)
+function Exit-Error  { param([string]$msg)
     Write-Err2 $msg
     exit 1
 }
@@ -51,11 +49,11 @@ if (Test-Path "pyproject.toml") {
     Write-Sect "Cloning SNI repository"
     $SniDir = Join-Path $env:TEMP "sni-install-$(Get-Random)"
     git clone --depth 1 https://github.com/sundeepyt2/SNI.git $SniDir
-    if (-not $?) { Die "git clone failed" }
+    if (-not $?) { Exit-Error "git clone failed" }
 }
 
 if (-not (Test-Path (Join-Path $SniDir "pyproject.toml"))) {
-    Die "pyproject.toml not found in $SniDir. Make sure you're running this from the SNI repo root."
+    Exit-Error "pyproject.toml not found in $SniDir. Make sure you're running this from the SNI repo root."
 }
 
 Set-Location $SniDir
@@ -98,7 +96,7 @@ if (Get-CommandSafe winget) {
             Invoke-RestMethod -Uri "https://get.scoop.sh" | Invoke-Expression
             $env:Path += ";$env:USERPROFILE\scoop\shims"
         } catch {
-            Die "Could not bootstrap any package manager. Install winget, scoop, or choco manually and re-run."
+            Exit-Error "Could not bootstrap any package manager. Install winget, scoop, or choco manually and re-run."
         }
         if (Get-CommandSafe scoop) { $PkgMgr = "scoop" }
     }
@@ -172,7 +170,7 @@ foreach ($cand in @("python", "py", "python3")) {
 }
 
 if (-not $pythonExe) {
-    Die "Python not found on PATH. Install Python 3.10+ from https://python.org (check 'Add to PATH'), then re-run this script."
+    Exit-Error "Python not found on PATH. Install Python 3.10+ from https://python.org (check 'Add to PATH'), then re-run this script."
 }
 
 # Verify version
@@ -183,7 +181,7 @@ $pyMajor = [int]$pyParts[0]
 $pyMinor = [int]$pyParts[1]
 
 if ($pyMajor -lt 3 -or ($pyMajor -eq 3 -and $pyMinor -lt 10)) {
-    Die "Python $pyVersion found, but SNI requires Python 3.10 or newer. Upgrade from https://python.org and re-run."
+    Exit-Error "Python $pyVersion found, but SNI requires Python 3.10 or newer. Upgrade from https://python.org and re-run."
 }
 
 Write-OK "Python $pyVersion detected ($pythonExe)"
@@ -195,7 +193,7 @@ Write-Sect "Step 3/4 — Install SNI (pip install)"
 Write-Step "pip install --user ."
 & $pythonExe -m pip install --user --upgrade pip 2>&1 | Out-Null
 & $pythonExe -m pip install --user .
-if (-not $?) { Die "pip install failed. See errors above." }
+if (-not $?) { Exit-Error "pip install failed. See errors above." }
 
 Write-OK "SNI installed"
 

@@ -49,12 +49,19 @@ def run_wizard(path: Path) -> Config:
             "\n[dim]AllAnime sometimes blocks API requests with a captcha / Cloudflare wall. "
             "You can skip this and add a fix later with `sni config --cookie-info`.[/dim]"
         )
-        if Confirm.ask("Do you want to bypass AllAnime captcha via a Cloudflare Worker? (recommended)", default=False):
+        if Confirm.ask(
+            "Bypass AllAnime captcha via a Cloudflare Worker? (recommended)",
+            default=False,
+        ):
             allanime_cf_worker_url = Prompt.ask(
                 "Paste your CF Worker URL (e.g. https://xan-proxy.you.workers.dev)",
                 default="",
             ).strip()
-        if Confirm.ask("Also set AllAnime browser cookies? (optional, only if Worker alone doesn't work)", default=False):
+        if Confirm.ask(
+            "Also set AllAnime browser cookies? "
+            "(only if Worker alone doesn't work)",
+            default=False,
+        ):
             allanime_cookies = Prompt.ask(
                 "Paste cookie string (k1=v1; k2=v2)",
                 default="",

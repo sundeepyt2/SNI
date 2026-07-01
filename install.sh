@@ -41,10 +41,6 @@ case "$OS" in
     *)       die "Unsupported OS: $OS (only Linux and macOS are supported).";;
 esac
 
-PYTHON_BIN="python3"
-PIP_BIN="pip3"
-SNI_REPO_DIR=""
-
 # When piped via curl, we have no checkout — clone first.
 if [ ! -f "pyproject.toml" ]; then
     section "Cloning SNI repository"
@@ -53,7 +49,6 @@ if [ ! -f "pyproject.toml" ]; then
     git clone --depth 1 https://github.com/sundeepyt2/SNI.git "$SNI_TMPDIR/SNI"
     cd "$SNI_TMPDIR/SNI"
 fi
-SNI_REPO_DIR="$(pwd)"
 
 section "SNI installer — $PLATFORM ($ARCH)"
 
@@ -214,9 +209,12 @@ section "Step 3/4 — Install SNI (pip install)"
 # --break-system-packages is needed on Debian 12+/Fedora/PEP 668 systems
 # where pip refuses to touch the system Python.
 PIP_FLAGS=(--user)
-if python3 -c "import sysconfig; sysconfig.get_path('stdlib', 'posix_user')" 2>/dev/null; then
-    if [ -f /usr/lib/python3*/EXTERNALLY-MANAGED ] 2>/dev/null || \
-       ls /usr/lib/python3*/EXTERNALLY-MANAGED >/dev/null 2>&1; then
+
+# Detect EXTERNALLY-MANAGED marker (PEP 668). Can't use [ -f ...glob... ]
+# because -f doesn't expand globs (shellcheck SC2144). Use compgen or ls instead.
+if [ -d /usr/lib/python3 ] || [ -d /usr/lib/python3.11 ] || [ -d /usr/lib/python3.12 ]; then
+    # shellcheck disable=SC2086  # glob needs to expand here
+    if ls /usr/lib/python3*/EXTERNALLY-MANAGED >/dev/null 2>&1; then
         PIP_FLAGS+=(--break-system-packages)
     fi
 fi

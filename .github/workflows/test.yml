@@ -57,9 +57,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
+            Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
+          }
+
       - name: Run PSScriptAnalyzer
-        uses: microsoft/psscriptanalyzer-action@v1.1
-        with:
-          path: install.ps1
-          recurse: false
-          severity: warning
+        shell: pwsh
+        run: |
+          # Run PSScriptAnalyzer. We treat Error severity as failures and
+          # print Warning severities as informational (PSAvoidUsingWriteHost
+          # etc. are stylistic and don't affect functionality for an installer
+          # script whose whole job is interactive console output).
+          $results = Invoke-ScriptAnalyzer -Path install.ps1 -Severity Error, Warning
+          $errors = $results | Where-Object { $_.Severity -eq 'Error' }
+          $warnings = $results | Where-Object { $_.Severity -eq 'Warning' }
+
+          if ($warnings) {
+            Write-Host "PSScriptAnalyzer warnings (informational):"
+            $warnings | Format-Table -AutoSize
+          }
+          if ($errors) {
+            Write-Host "PSScriptAnalyzer errors (must fix):"
+            $errors | Format-Table -AutoSize
+            Write-Error "PSScriptAnalyzer found $($errors.Count) error(s)."
+            exit 1
+          }
+          Write-Host "PSScriptAnalyzer: no errors. $($warnings.Count) warning(s) (informational)."

@@ -24,12 +24,11 @@ Key differences from the previous SNI version (which kept hitting
    for mp4upload / filemoon / vidnest / vizcloud / mycloud.
 """
 
-import asyncio
 import base64
 import json
 import re
 from hashlib import sha256
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
@@ -119,7 +118,11 @@ def decode_url(raw: str) -> str:
     return raw
 
 
-def _build_cf_worker_url(worker_url: str, target: str, extra_headers: Optional[Dict[str, str]] = None) -> str:
+def _build_cf_worker_url(
+    worker_url: str,
+    target: str,
+    extra_headers: Optional[Dict[str, str]] = None,
+) -> str:
     """Wrap an upstream URL with the CF Worker proxy URL (XAN's protocol).
 
     Worker expects: ``<worker>/?url=<encoded>&h_<Header>=<value>...``
@@ -199,10 +202,6 @@ class AllAnimeProvider(Provider):
             if _is_captcha_response(resp):
                 # Try CF Worker fallback if configured
                 if self.cf_worker_url:
-                    wrapped = _build_cf_worker_url(
-                        self.cf_worker_url, self.GRAPHQL_URL,
-                        extra_headers={"Referer": self.REFERER, "Origin": self.ORIGIN},
-                    )
                     # Workers are GET-only; can't POST a GraphQL body through
                     # them. Bail out with a clear error instead.
                     raise CaptchaRequiredError(
@@ -248,7 +247,8 @@ class AllAnimeProvider(Provider):
                     )
                     try:
                         cf_resp = await client.get(wrapped)
-                        if cf_resp.status_code < 400 and "json" in cf_resp.headers.get("content-type", "").lower():
+                        cf_ct = cf_resp.headers.get("content-type", "").lower()
+                        if cf_resp.status_code < 400 and "json" in cf_ct:
                             raw = cf_resp.json()
                             self._check_graphql_errors(raw)
                             return raw
