@@ -4,14 +4,16 @@ import sys
 from typing import Optional
 
 import typer
+from rich.console import Console
+from rich.panel import Panel
 from rich.prompt import Prompt
 
 from sni import __version__
 from sni.config import DEFAULT_CONFIG_PATH, Config
-from sni.exceptions import ProviderError, ProviderNotFoundError
+from sni.exceptions import CaptchaRequiredError, ProviderError, ProviderNotFoundError
 from sni.logger import setup_logger
 from sni.player import Player
-from sni.providers.base import AnimeResult
+from sni.providers.base import AnimeResult, Provider
 from sni.providers.registry import ProviderRegistry
 from sni.ui import (
     display_episodes,
@@ -33,6 +35,44 @@ app = typer.Typer(
     no_args_is_help=False,
 )
 logger = setup_logger()
+console = Console()
+
+
+def _resolve_cookies(provider_name: str, cfg: Config, cookie_flag: Optional[str]) -> str:
+    """Resolve cookies for ``provider_name``.
+
+    Precedence: explicit ``--cookie`` flag > config-stored cookies. Currently
+    only AllAnime uses cookies; other providers ignore the value.
+    """
+    if cookie_flag:
+        return cookie_flag
+    if provider_name == "allanime":
+        return cfg.get_allanime_cookies()
+    return ""
+
+
+def _instantiate_provider(provider_name: str, cfg: Config, cookie_flag: Optional[str] = None):
+    """Instantiate a provider, injecting config-stored credentials.
+
+    For AllAnime this means cookies AND the optional CF Worker URL.
+    """
+    cls = ProviderRegistry.get(provider_name)
+    if cls is None:
+        return None
+    if provider_name == "allanime":
+        return cls(
+            cookies=_resolve_cookies(provider_name, cfg, cookie_flag),
+            cf_worker_url=cfg.get_allanime_cf_worker_url(),
+        )
+    return cls()
+
+
+def _print_captcha_help(err: CaptchaRequiredError) -> None:
+    console.print(Panel(
+        f"[bold red]AllAnime captcha required[/bold red]\n\n{err.hint}",
+        title="Action needed",
+        border_style="red",
+    ))
 
 
 def version_callback(value: bool):
@@ -60,40 +100,68 @@ async def _search(
     query: str,
     provider_name: Optional[str] = None,
     all_providers: bool = False,
+    cookies: Optional[str] = None,
+    cf_worker_url: Optional[str] = None,
 ) -> list[tuple[str, list[AnimeResult]]]:
     results: list[tuple[str, list[AnimeResult]]] = []
+    cfg = Config.load()
+
+    def _instantiate(pname: str) -> Optional[Provider]:
+        cls = ProviderRegistry.get(pname)
+        if cls is None:
+            return None
+        if pname == "allanime":
+            return cls(
+                cookies=cookies or (cfg.get_allanime_cookies() if not cookies else ""),
+                cf_worker_url=cf_worker_url or cfg.get_allanime_cf_worker_url(),
+            )
+        return cls()
 
     if all_providers:
         for pname in ProviderRegistry.list():
-            provider_cls = ProviderRegistry.get(pname)
-            if not provider_cls:
+            provider = _instantiate(pname)
+            if provider is None:
                 continue
             try:
-                provider = provider_cls()
                 hits = await provider.search(query)
                 results.append((pname, hits))
+            except CaptchaRequiredError:
+                # Captcha is provider-specific; re-raise only when this is the
+                # user's selected provider so the panel shows. Otherwise log.
+                logger.warning(f"{pname} returned captcha; skipping in --all-providers mode")
             except Exception as e:
                 logger.exception(f"{pname} search failed for '{query}'")
                 logger.warning(f"{pname} search failed: {type(e).__name__}: {e}")
     elif provider_name:
-        provider_cls = ProviderRegistry.get(provider_name)
-        if not provider_cls:
+        provider = _instantiate(provider_name)
+        if provider is None:
             typer.echo(f"Unknown provider: {provider_name}")
             return results
         try:
-            provider = provider_cls()
             hits = await provider.search(query)
             results.append((provider_name, hits))
+        except CaptchaRequiredError:
+            raise  # let the caller print the helpful panel
         except Exception as e:
             logger.exception(f"Search failed for '{query}' with provider '{provider_name}'")
             typer.echo(f"Search failed: {type(e).__name__}: {e}")
     else:
-        cfg = Config.load()
         preferred = cfg.default_provider
-        hits = await ProviderRegistry.search_all(query, preferred)
-        for pname, plist in hits.items():
-            if plist:
-                results.append((pname, plist))
+        order = ProviderRegistry.get_fallback_order(preferred)
+        for pname in order:
+            provider = _instantiate(pname)
+            if provider is None:
+                continue
+            try:
+                hits = await provider.search(query)
+                if hits:
+                    results.append((pname, hits))
+            except CaptchaRequiredError:
+                if pname == preferred:
+                    raise
+                logger.warning(f"{pname} returned captcha; skipped")
+            except Exception:
+                pass
 
     return results
 
@@ -117,8 +185,13 @@ async def _play(
 ):
     cfg = Config.load()
     provider_name = provider or cfg.default_provider
+    resolved_cookie = _resolve_cookies(provider_name, cfg, cookie)
 
-    results = await _search(query, provider_name)
+    try:
+        results = await _search(query, provider_name, cookies=resolved_cookie)
+    except CaptchaRequiredError as e:
+        _print_captcha_help(e)
+        return
     if not results:
         typer.echo("No results found.")
         return
@@ -129,7 +202,7 @@ async def _play(
         typer.echo("No selection made.")
         return
 
-    await _watch_anime(selected, provider_name, dub, quality, episodes, cookie)
+    await _watch_anime(selected, provider_name, dub, quality, episodes, resolved_cookie)
 
 
 async def _watch(
@@ -143,6 +216,7 @@ async def _watch(
 ):
     cfg = Config.load()
     provider_name = provider or cfg.default_provider
+    resolved_cookie = _resolve_cookies(provider_name, cfg, cookie)
 
     if resume:
         history = WatchHistory()
@@ -169,14 +243,20 @@ async def _watch(
             title=selected_entry["anime_title"],
         )
         ep_str = str(selected_entry["last_episode"])
-        await _watch_anime(selected, provider_name, dub, quality, ep_str, cookie)
+        # Resume uses the original provider; re-resolve cookies for it.
+        resolved_cookie = _resolve_cookies(provider_name, cfg, cookie)
+        await _watch_anime(selected, provider_name, dub, quality, ep_str, resolved_cookie)
         return
 
     if not query:
         typer.echo("Please provide a search query or use --resume.")
         return
 
-    results = await _search(query, provider_name)
+    try:
+        results = await _search(query, provider_name, cookies=resolved_cookie)
+    except CaptchaRequiredError as e:
+        _print_captcha_help(e)
+        return
     if not results:
         typer.echo("No results found.")
         return
@@ -187,7 +267,7 @@ async def _watch(
         typer.echo("No selection made.")
         return
 
-    await _watch_anime(selected, provider_name, dub, quality, episodes, cookie)
+    await _watch_anime(selected, provider_name, dub, quality, episodes, resolved_cookie)
 
 
 @app.command()
@@ -195,18 +275,36 @@ def search(
     query: str = typer.Argument(..., help="Anime title to search"),
     provider: Optional[str] = typer.Option(None, "--provider", "-p", help="Provider to use"),
     all_providers: bool = typer.Option(False, "--all-providers", help="Search all providers"),
+    cookie: Optional[str] = typer.Option(
+        None, "--cookie", help="Browser cookies for providers that need them (allanime)",
+    ),
 ):
     """Search for anime."""
-    asyncio.run(_search_cmd(query, provider, all_providers))
+    asyncio.run(_search_cmd(query, provider, all_providers, cookie))
 
 
-async def _search_cmd(query: str, provider: Optional[str], all_providers: bool):
+async def _search_cmd(
+    query: str,
+    provider: Optional[str],
+    all_providers: bool,
+    cookie: Optional[str] = None,
+):
+    cfg = Config.load()
     if all_providers:
-        results = await _search(query, all_providers=True)
+        # When iterating all providers we still want config cookies for allanime.
+        results = await _search(
+            query,
+            all_providers=True,
+            cookies=cfg.get_allanime_cookies() if not cookie else cookie,
+        )
     else:
-        cfg = Config.load()
         provider_name = provider or cfg.default_provider
-        results = await _search(query, provider_name=provider_name)
+        resolved = _resolve_cookies(provider_name, cfg, cookie)
+        try:
+            results = await _search(query, provider_name=provider_name, cookies=resolved)
+        except CaptchaRequiredError as e:
+            _print_captcha_help(e)
+            raise typer.Exit(code=1)
 
     if not results:
         typer.echo("No results found.")
@@ -233,6 +331,9 @@ async def _play_episode(
 ):
     try:
         streams = await prov.get_streams(episode.id, quality, dub)
+    except CaptchaRequiredError as e:
+        _print_captcha_help(e)
+        return False
     except ProviderError as e:
         msg = str(e)
         if dub and ("dub" in msg.lower() or "server" in msg.lower()):
@@ -274,7 +375,10 @@ async def _watch_anime(
     provider_cls = ProviderRegistry.get(provider_name)
     if not provider_cls:
         raise ProviderNotFoundError(f"Unknown provider: {provider_name}")
-    prov = provider_cls(cookies=cookie or "")
+    # Use the shared instantiator so AllAnime gets BOTH cookies AND cf_worker_url.
+    prov = _instantiate_provider(provider_name, cfg, cookie)
+    if prov is None:
+        raise ProviderNotFoundError(f"Unknown provider: {provider_name}")
 
     ep_list = await prov.get_episodes(selected.id)
     if not ep_list:
@@ -386,10 +490,43 @@ def config(
     edit: bool = typer.Option(False, "--edit", help="Open config in editor"),
     interactive: bool = typer.Option(False, "--interactive", help="Interactive config wizard"),
     update: Optional[str] = typer.Option(None, "--update", help="Update config key=value"),
+    cookie_info: bool = typer.Option(
+        False, "--cookie-info", help="Show how to set AllAnime cookies to bypass captcha",
+    ),
 ):
     """Manage configuration."""
     if path:
         typer.echo(str(DEFAULT_CONFIG_PATH))
+        return
+
+    if cookie_info:
+        from sni.config import DEFAULT_COOKIES_PATH
+        console.print(Panel(
+            "[bold]AllAnime captcha bypass — three options[/bold]\n\n"
+            "[bold green]Option 1 — Cloudflare Worker (most reliable, recommended):[/bold green]\n"
+            "  Deploy the XAN CF Worker (free, 2 minutes):\n"
+            "    1. Go to https://dash.cloudflare.com -> Workers & Pages -> Create\n"
+            "    2. Paste the contents of XAN/cf-worker/worker.js from the XAN repo\n"
+            "    3. Deploy, copy the worker URL (e.g. https://xan-proxy.you.workers.dev)\n"
+            "    4. Save it: sni config --update allanime_cf_worker_url='https://your-worker.workers.dev'\n"
+            "  The Worker proxies requests through Cloudflare's own IPs, which AllAnime\n"
+            "  rarely challenges. This fixes captcha on shared/VPN IPs where cookies fail.\n\n"
+            "[bold yellow]Option 2 — Browser cookies (works if your IP isn't already flagged):[/bold yellow]\n"
+            "  Option A — config key:\n"
+            "    sni config --update allanime_cookies='k1=v1; k2=v2'\n"
+            "  Option B — cookies file (easier to refresh):\n"
+            f"    echo 'k1=v1; k2=v2' > {DEFAULT_COOKIES_PATH}\n"
+            "  Option C — one-off flag:\n"
+            "    sni play 'one piece' --cookie 'k1=v1; k2=v2'\n"
+            "  Get the cookie string from your browser:\n"
+            "    1. Open https://allanime.day, solve any captcha.\n"
+            "    2. DevTools -> Application -> Cookies -> allanime.day.\n"
+            "    3. Copy the full cookie string.\n\n"
+            "[bold]Option 3 — switch providers:[/bold]\n"
+            "  sni play 'one piece' -p hianime",
+            title="AllAnime captcha bypass",
+            border_style="cyan",
+        ))
         return
 
     if interactive:
@@ -413,10 +550,14 @@ def config(
             setattr(cfg, key, typed_val)
             cfg.save()
             typer.echo(f"Updated {key}={typed_val}")
+            if key == "allanime_cookies" and typed_val:
+                typer.echo("AllAnime cookies saved. Future sni commands will reuse them.")
         else:
             typer.echo(f"Unknown key: {key}")
     else:
         typer.echo(f"Config path: {DEFAULT_CONFIG_PATH}")
+        has_cookies = bool(cfg.get_allanime_cookies())
+        typer.echo(f"AllAnime cookies: {'set' if has_cookies else 'not set'}")
 
 
 @app.command()

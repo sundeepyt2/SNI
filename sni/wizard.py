@@ -42,6 +42,24 @@ def run_wizard(path: Path) -> Config:
     use_ipc = Confirm.ask("Enable MPV IPC controls?", default=True)
     icons = Confirm.ask("Show icons in UI?", default=True)
 
+    allanime_cookies = ""
+    allanime_cf_worker_url = ""
+    if default_provider == "allanime":
+        console.print(
+            "\n[dim]AllAnime sometimes blocks API requests with a captcha / Cloudflare wall. "
+            "You can skip this and add a fix later with `sni config --cookie-info`.[/dim]"
+        )
+        if Confirm.ask("Do you want to bypass AllAnime captcha via a Cloudflare Worker? (recommended)", default=False):
+            allanime_cf_worker_url = Prompt.ask(
+                "Paste your CF Worker URL (e.g. https://xan-proxy.you.workers.dev)",
+                default="",
+            ).strip()
+        if Confirm.ask("Also set AllAnime browser cookies? (optional, only if Worker alone doesn't work)", default=False):
+            allanime_cookies = Prompt.ask(
+                "Paste cookie string (k1=v1; k2=v2)",
+                default="",
+            ).strip()
+
     cfg = Config(
         default_provider=default_provider,
         selector=selector,
@@ -52,6 +70,8 @@ def run_wizard(path: Path) -> Config:
         translation_type=translation,
         auto_next=auto_next,
         use_ipc=use_ipc,
+        allanime_cookies=allanime_cookies,
+        allanime_cf_worker_url=allanime_cf_worker_url,
     )
     cfg.save(path)
 

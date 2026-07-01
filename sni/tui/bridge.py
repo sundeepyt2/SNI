@@ -19,6 +19,14 @@ def get_provider(provider_name: str = ""):
     cls = ProviderRegistry.get(name)
     if not cls:
         raise ValueError(f"Unknown provider: {name}")
+    # AllAnimeProvider.__init__ accepts ``cookies`` AND ``cf_worker_url``;
+    # inject config-stored values so the TUI also benefits from the captcha
+    # bypass (CF Worker fallback) without needing CLI flags.
+    if name == "allanime":
+        return cls(
+            cookies=cfg.get_allanime_cookies(),
+            cf_worker_url=cfg.get_allanime_cf_worker_url(),
+        )
     return cls()
 
 
