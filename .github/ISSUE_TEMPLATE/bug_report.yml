@@ -1,0 +1,106 @@
+name: 🐛 Bug Report
+description: Report something that's broken or behaving unexpectedly
+title: "[BUG] <short description>"
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report! Please fill out the
+        sections below — the more detail you provide, the faster we can fix it.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug. What did you expect to happen, and what actually happened?
+      placeholder: |
+        I ran `sni play "one piece"` and expected it to start playing.
+        Instead, it crashed with `NEED_CAPTCHA` after listing episodes.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Exact commands to reproduce the bug. Include the search query, provider, and any flags.
+      placeholder: |
+        1. `sni play "one piece"`
+        2. Pick result #1 from the fzf list
+        3. Pick episode 1
+        4. See error...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider
+      description: Which provider were you using?
+      options:
+        - allanime
+        - hianime
+        - animepahe
+        - Not sure / N/A
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error output / logs
+      description: Paste the full error output. Run with `--debug` for verbose logs (`sni --debug play "..."`).
+      render: shell
+    validations:
+      required: false
+
+  - type: input
+    id: sni-version
+    attributes:
+      label: SNI version
+      description: Output of `sni --version`
+      placeholder: "sni v1.1.1"
+    validations:
+      required: true
+
+  - type: input
+    id: install-method
+    attributes:
+      label: How did you install SNI?
+      description: This helps us figure out if it's an installer bug or a code bug.
+      placeholder: "pip install sni-cli / install.sh / install.ps1 / from source"
+    validations:
+      required: true
+
+  - type: textarea
+    id: system
+    attributes:
+      label: System info
+      description: OS, Python version, mpv version. Run `python3 --version && mpv --version` if unsure.
+      placeholder: |
+        OS: Ubuntu 24.04
+        Python: 3.12.3
+        mpv: 0.36.0
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: captcha-config
+    attributes:
+      label: AllAnime captcha configuration (skip if not using allanime)
+      options:
+        - label: I have `allanime_cf_worker_url` set in my config
+        - label: I have `allanime_cookies` set in my config
+        - label: Neither — I'm using AllAnime without any captcha bypass
+        - label: I tried `sni config --cookie-info` and followed the instructions
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Checklist
+      options:
+        - label: I've searched existing issues to make sure this isn't a duplicate
+          required: true
+        - label: I've updated to the latest version (`pip install --upgrade sni-cli`)
+          required: true

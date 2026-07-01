@@ -2,9 +2,12 @@
 
 A terminal-based anime streaming client inspired by [ani-cli](https://github.com/pystardust/ani-cli). Search, browse, and stream anime from multiple providers directly in your terminal.
 
+[![PyPI version](https://badge.fury.io/py/sni-cli.svg)](https://pypi.org/project/sni-cli/)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)](#installation)
+[![CI](https://github.com/sundeepyt2/SNI/actions/workflows/test.yml/badge.svg)](https://github.com/sundeepyt2/SNI/actions/workflows/test.yml)
+[![GitHub release](https://img.shields.io/github/v/release/sundeepyt2/SNI.svg)](https://github.com/sundeepyt2/SNI/releases/latest)
 
 ---
 
