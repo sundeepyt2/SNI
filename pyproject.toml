@@ -3,8 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "sni"
-version = "1.1.0"
+# PyPI package name. We use "sni-cli" instead of "sni" because PyPI rejected
+# the bare "sni" name as too similar to existing projects (sni-auth, sni-bin,
+# sni-sdk, snib, snic, snid, ...). The console-script entry point is still
+# just `sni` (defined below in [project.scripts]), so users run `sni play`,
+# `sni tui`, etc. — only `pip install sni-cli` differs from the bare name.
+name = "sni-cli"
+version = "1.1.1"
 description = "Stream Ninja Interface — terminal-based anime streaming CLI + TUI"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -60,15 +60,17 @@ Then re-run the install command.
 
 ### Install from PyPI
 
-Once SNI is published to PyPI (after the v1.1.0 release), you can install it with plain pip — no cloning required:
+Once SNI is published to PyPI (after the v1.1.1 release), you can install it with plain pip — no cloning required:
 
 ```bash
 # Linux / macOS
-pip install --user sni
+pip install --user sni-cli
 
 # Windows
-pip install sni
+pip install sni-cli
 ```
+
+> **Why `sni-cli` and not `sni`?** PyPI rejected the bare `sni` name as too similar to existing projects (`sni-auth`, `sni-bin`, `sni-sdk`, `snib`, `snic`, `snid`, ...). The package name on PyPI is `sni-cli`, but the console command is still just `sni` (e.g. `sni play`, `sni tui`, `sni search`).
 
 This installs the SNI Python package and the `sni` command, but **does not** install `mpv` or `fzf` — install those separately if you don't have them already:
 
@@ -405,8 +407,8 @@ sni --version
 
 ```bash
 # Remove the Python package
-pip uninstall sni   # Linux/macOS
-pip uninstall sni   # Windows
+pip uninstall sni-cli   # Linux/macOS
+pip uninstall sni-cli   # Windows
 
 # Remove config + cookies
 rm -rf ~/.config/sni                    # Linux/macOS
