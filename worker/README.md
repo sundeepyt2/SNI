@@ -28,20 +28,33 @@ Pick **one**. All three run the same JavaScript code (slightly different entry-p
 
 ## Option 1: Deno Deploy (recommended — most reliable)
 
+**Easiest method — Playground (no GitHub repo needed):**
+
 1. Go to https://dash.deno.com → Sign in with GitHub
 2. Click **"New Project"**
-3. Click **"Playground"** (top-right, lets you paste code directly — no GitHub repo needed)
-4. Delete the default code, paste the entire contents of [`proxy.deno.js`](./proxy.deno.js) from this directory
-5. Click **"Save & Deploy"**
-6. You'll get a URL like `https://your-project.deno.dev` — copy it
-7. Test it in your browser: visit `https://your-project.deno.dev/` — you should see `{"ok":true,"service":"sni-stream-proxy",...}`
-8. Save it to SNI:
+3. Click **"Playground"** (top-right corner — IMPORTANT: don't pick "Import from GitHub" or you'll hit the `/tmp/build/src/main.ts` not found error)
+4. Delete the default code in the editor
+5. Paste the entire contents of [`main.ts`](./main.ts) from this directory
+6. Click **"Save & Deploy"**
+7. You'll get a URL like `https://your-project.deno.dev` — copy it
+8. Test it in your browser: visit `https://your-project.deno.dev/` — you should see `{"ok":true,"service":"sni-stream-proxy",...}`
+9. Save it to SNI:
 
    ```bash
    sni config --update allanime_cf_worker_url='https://your-project.deno.dev'
    ```
 
-9. Try SNI: `sni play "one piece"`
+10. Try SNI: `sni play "one piece"`
+
+**Alternative method — GitHub repo (if Playground doesn't work for you):**
+
+1. Fork the SNI repo on GitHub
+2. Go to https://dash.deno.com → "New Project" → pick your fork
+3. Deno Deploy auto-detects `main.ts` (or `deno.json`'s `entrypoint` field) as the entrypoint
+4. Click "Link" → "Deploy"
+5. Copy the URL, save to SNI as above
+
+**If you see "Entrypoint at '/tmp/build/src/main.ts' not found":** This means you picked "New Project" but Deno Deploy can't find the entrypoint. Fix by either using the Playground (above) or pushing `main.ts` to the root of your GitHub repo (not inside `src/`).
 
 ---
 
