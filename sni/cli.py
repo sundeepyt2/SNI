@@ -529,17 +529,16 @@ def config(
             "    sni config --update allanime_cookies='cf_clearance=...;'\n"
             "  Or write to file (easier to refresh):\n"
             f"    echo 'cf_clearance=...;' > {DEFAULT_COOKIES_PATH}\n\n"
-            "[bold yellow]Option 2 - Cloudflare Worker[/bold yellow]\n"
+            "[bold yellow]Option 2 - Self-hosted proxy worker[/bold yellow]\n"
             "[bold yellow](last resort for VPN/shared IPs):[/bold yellow]\n"
-            "  Deploy the XAN CF Worker (free, requires Cloudflare account):\n"
-            "    1. https://dash.cloudflare.com -> Workers & Pages -> Create\n"
-            "    2. Paste XAN/cf-worker/worker.js from the XAN repo\n"
-            "    3. Deploy, copy the worker URL\n"
-            "    4. sni config --update allanime_cf_worker_url='https://your-worker.workers.dev'\n"
-            "  Can't create a Cloudflare account? Deploy the same worker.js to:\n"
-            "    - Deno Deploy (https://dash.deno.com) - free, no card required\n"
-            "    - Vercel Edge Functions (https://vercel.com) - free tier\n"
-            "    - Netlify Functions (https://netlify.com) - free tier\n",
+            "  SNI ships worker code in the worker/ directory. Deploy to ANY of:\n"
+            "    - Deno Deploy (recommended): https://dash.deno.com -> Playground\n"
+            "      Paste worker/proxy.deno.js -> Save & Deploy. ~2 min, no card.\n"
+            "    - Vercel Edge Functions: https://vercel.com (3 min)\n"
+            "    - Cloudflare Workers: https://dash.cloudflare.com (5 min, flaky)\n"
+            "  See worker/README.md in the repo for full step-by-step.\n"
+            "  Then save the URL:\n"
+            "    sni config --update allanime_cf_worker_url='https://your-deployment'\n",
             title="AllAnime captcha bypass",
             border_style="cyan",
         ))

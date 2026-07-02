@@ -242,8 +242,8 @@ class AllAnimeProvider(Provider):
         Fallback order:
           1. Direct request to api.allanime.day (fastest when not captcha-walled)
           2. Each public CORS proxy in PUBLIC_PROXIES (no user config needed)
-          3. CF Worker (only if user configured allanime_cf_worker_url — but
-             CF Workers are GET-only, so this raises a clear error instead)
+          3. CF Worker (if user configured allanime_cf_worker_url — the v3
+             worker in worker/proxy.js supports POST)
 
         CaptchaRequiredError is raised only when ALL fallbacks fail.
         """
@@ -255,6 +255,12 @@ class AllAnimeProvider(Provider):
         fallbacks: List[tuple] = [("direct", self.GRAPHQL_URL)]
         for i in range(len(self.PUBLIC_PROXIES)):
             fallbacks.append(("proxy", self._proxy_url(i, self.GRAPHQL_URL)))
+        if self.cf_worker_url:
+            # CF Worker v3 supports POST — body is forwarded as-is
+            fallbacks.append(("worker", _build_cf_worker_url(
+                self.cf_worker_url, self.GRAPHQL_URL,
+                extra_headers={"Referer": self.REFERER, "Origin": self.ORIGIN},
+            )))
 
         # If a proxy previously worked, try it first (skip the dead direct)
         if self._working_proxy_idx is not None:

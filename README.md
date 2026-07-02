@@ -327,26 +327,30 @@ echo 'cf_clearance=...;' > ~/.config/sni/allanime_cookies.txt
 sni play "one piece" --cookie 'cf_clearance=...;'
 ```
 
-### Option 2 — Cloudflare Worker (last resort for VPN/shared IPs that are permanently captcha-walled AND cookies + public proxies don't work)
+### Option 2 — Self-hosted proxy worker (last resort for VPN/shared IPs that are permanently captcha-walled AND cookies + public proxies don't work)
 
-This is the most powerful bypass — it proxies AllAnime API requests through Cloudflare's own IPs, which AllAnime rarely challenges. Only set this up if Option 1 fails AND SNI's built-in proxy fallback doesn't work for you.
+SNI ships with ready-to-deploy proxy worker code in the [`worker/`](worker/) directory. The worker proxies AllAnime API requests through a clean IP (the platform's IP), which AllAnime's edge doesn't flag. **Three deployment platforms are supported — all have free tiers, none require a credit card:**
 
-**Deploy via Cloudflare** (free, requires a Cloudflare account):
+| Platform | Difficulty | Setup time | Why pick this |
+|---|---|---|---|
+| **Deno Deploy** | Easiest | ~2 min | Most reliable as of 2026; playground = no GitHub repo needed |
+| **Vercel Edge Functions** | Easy | ~3 min | Good if you already use Vercel |
+| **Cloudflare Workers** | Hard right now | ~5 min | Known dashboard deploy bugs; use only if others fail |
 
-1. Go to https://dash.cloudflare.com → Workers & Pages → Create
-2. Paste the contents of [`cf-worker/worker.js`](https://github.com/smithmx20/XAN/blob/main/cf-worker/worker.js) from the XAN repo
-3. Deploy, copy the worker URL (e.g. `https://xan-proxy.you.workers.dev`)
-4. Save it to SNI:
+**Full step-by-step instructions for all three platforms are in [`worker/README.md`](worker/README.md).**
+
+Quick Deno Deploy setup (recommended):
+
+1. Go to https://dash.deno.com → sign in with GitHub → "New Project" → "Playground"
+2. Paste the contents of [`worker/proxy.deno.js`](worker/proxy.deno.js) → click "Save & Deploy"
+3. Copy the URL (e.g. `https://your-project.deno.dev`)
+4. Save to SNI:
 
    ```bash
-   sni config --update allanime_cf_worker_url='https://xan-proxy.you.workers.dev'
+   sni config --update allanime_cf_worker_url='https://your-project.deno.dev'
    ```
 
-**Can't create a Cloudflare account?** Deploy the same `worker.js` code to any of these alternative platforms (all have free tiers, none require a credit card):
-
-- **Deno Deploy** (https://dash.deno.com) — free, no card required, fastest setup. Wrap the worker's `fetch` handler in a `Deno.serve()` call.
-- **Vercel Edge Functions** (https://vercel.com) — free tier. Adapt the handler to Vercel's `export default function handler(req: Request)` signature.
-- **Netlify Functions** (https://netlify.com) — free tier. Convert to Netlify's `exports.handler` format.
+5. Try: `sni play "one piece"`
 
 The worker code is platform-agnostic — it's just a `fetch` handler that proxies a request. The only thing that changes between platforms is the entry-point wrapper.
 
