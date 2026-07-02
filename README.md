@@ -303,9 +303,9 @@ sni tui
 
 ## AllAnime captcha fix
 
-**First: you probably don't need any of this.** SNI now automatically tries multiple AllAnime API mirrors (`api.allanime.day` + `api.allmanga.to`) before giving up. Most users can just run `sni play "one piece"` directly and it works — if one mirror is captcha-walled, SNI silently falls back to the other.
+**SNI v1.2.1+ auto-fixes captcha for you.** When `api.allanime.day` captcha-walls your IP, SNI automatically retries the request through a free public CORS proxy (`proxy.cors.sh`). This happens silently, with zero setup. Most users can just run `sni play "one piece"` and it works — no cookies, no CF Worker, no config changes.
 
-If you DO hit a `NEED_CAPTCHA` error (all mirrors failed), try these in order. Run `sni config --cookie-info` to see all options in a single panel.
+If you STILL see `NEED_CAPTCHA` (rare — means all proxies were also captcha-walled), try these in order. Run `sni config --cookie-info` to see all options in a single panel.
 
 ### Option 1 — Browser cookies (if your IP isn't permanently flagged)
 
@@ -327,9 +327,9 @@ echo 'cf_clearance=...;' > ~/.config/sni/allanime_cookies.txt
 sni play "one piece" --cookie 'cf_clearance=...;'
 ```
 
-### Option 2 — Cloudflare Worker (only for VPN/shared IPs that are permanently captcha-walled AND cookies don't work)
+### Option 2 — Cloudflare Worker (last resort for VPN/shared IPs that are permanently captcha-walled AND cookies + public proxies don't work)
 
-This is the most powerful bypass — it proxies AllAnime API requests through Cloudflare's own IPs, which AllAnime rarely challenges. Only set this up if Option 1 fails.
+This is the most powerful bypass — it proxies AllAnime API requests through Cloudflare's own IPs, which AllAnime rarely challenges. Only set this up if Option 1 fails AND SNI's built-in proxy fallback doesn't work for you.
 
 **Deploy via Cloudflare** (free, requires a Cloudflare account):
 

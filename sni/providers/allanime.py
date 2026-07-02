@@ -152,26 +152,22 @@ class AllAnimeProvider(Provider):
     supports_sub = True
     supports_dub = True
 
-    # AllAnime API mirrors. When the primary api.allanime.day captcha-walls
-    # the user's IP, SNI automatically retries the same request against each
-    # mirror in order. Mirrors are tried BEFORE the CF Worker fallback because
-    # they require zero setup from the user.
-    #
-    # Format: (api_graphql_url, api_url, allanime_base_url)
-    API_MIRRORS = [
-        # Primary — most reliable when not captcha-walled
-        ("https://api.allanime.day/api/graphql",
-         "https://api.allanime.day/api",
-         "https://allanime.day"),
-        # Mirror 1 — allmanga.to (sister site, shared backend)
-        ("https://api.allmanga.to/api/graphql",
-         "https://api.allmanga.to/api",
-         "https://allmanga.to"),
-    ]
-
+    # AllAnime API endpoints (XAN pattern).
+    GRAPHQL_URL = "https://api.allanime.day/api/graphql"
+    API_URL = "https://api.allanime.day/api"
     ALLANIME_BASE = "https://allanime.day"
     REFERER = REFERER
     ORIGIN = ORIGIN
+
+    # Free public CORS proxies that support POST + JSON bodies. SNI tries
+    # each one in order when the direct request to api.allanime.day is
+    # captcha-walled. proxy.cors.sh is the most reliable as of 2026; the
+    # others are kept as backup in case cors.sh ever rate-limits or goes
+    # down. Format: a format string with a single {url} placeholder.
+    PUBLIC_PROXIES = [
+        "https://proxy.cors.sh/{url}",
+        "https://thingproxy.freeboard.io/fetch/{url}",
+    ]
 
     def __init__(self, cookies: str = "", cf_worker_url: str = ""):
         self.cookies_str = cookies
@@ -183,12 +179,10 @@ class AllAnimeProvider(Provider):
                     k, v = part.split("=", 1)
                     self._cookies[k.strip()] = v.strip()
         self.cf_worker_url = (cf_worker_url or "").rstrip("/")
-        # Tracks which mirror actually worked, so we can reuse it on subsequent
-        # calls instead of trying the primary every time.
-        self._working_mirror_idx: Optional[int] = None
-
-    def _mirror(self, idx: int) -> tuple:
-        return self.API_MIRRORS[idx]
+        # Tracks which proxy actually worked, so we can reuse it on subsequent
+        # calls instead of trying the dead primary every time.
+        # None = direct (no proxy), 0 = first public proxy, etc.
+        self._working_proxy_idx: Optional[int] = None
 
     def _base_headers(self, *, json_body: bool = False) -> Dict[str, str]:
         h = {
@@ -201,27 +195,39 @@ class AllAnimeProvider(Provider):
             h["Content-Type"] = "application/json"
         return h
 
+    def _proxy_url(self, idx: int, target: str) -> str:
+        """Wrap an upstream URL with the i-th public proxy from PUBLIC_PROXIES."""
+        return self.PUBLIC_PROXIES[idx].format(url=target)
+
     async def _post_graphql(self, query: str, variables: dict) -> dict:
         """POST a regular GraphQL query to /api/graphql.
 
-        Tries each API mirror in order. If a mirror has previously worked
-        during this session, that mirror is tried first (faster). On the
-        first captcha from a mirror, SNI silently moves to the next mirror.
-        Only when ALL mirrors fail does it raise CaptchaRequiredError.
+        Fallback order:
+          1. Direct request to api.allanime.day (fastest when not captcha-walled)
+          2. Each public CORS proxy in PUBLIC_PROXIES (no user config needed)
+          3. CF Worker (only if user configured allanime_cf_worker_url — but
+             CF Workers are GET-only, so this raises a clear error instead)
+
+        CaptchaRequiredError is raised only when ALL fallbacks fail.
         """
         payload = {"query": query, "variables": variables}
         headers = self._base_headers(json_body=True)
 
-        # Build the list of mirror indices to try, starting with the
-        # previously-working one (if any) so we don't repeat failures.
-        order = list(range(len(self.API_MIRRORS)))
-        if self._working_mirror_idx is not None:
-            order.remove(self._working_mirror_idx)
-            order.insert(0, self._working_mirror_idx)
+        # Build the list of fallbacks to try.
+        # Each entry: ("direct"|"proxy"|"worker", url)
+        fallbacks: List[tuple] = [("direct", self.GRAPHQL_URL)]
+        for i in range(len(self.PUBLIC_PROXIES)):
+            fallbacks.append(("proxy", self._proxy_url(i, self.GRAPHQL_URL)))
+
+        # If a proxy previously worked, try it first (skip the dead direct)
+        if self._working_proxy_idx is not None:
+            # Move the working proxy to the front
+            working = fallbacks[self._working_proxy_idx + 1]  # +1 because [0] is direct
+            fallbacks.remove(working)
+            fallbacks.insert(0, working)
 
         last_error: Optional[Exception] = None
-        for idx in order:
-            graphql_url, _api_url, _base_url = self._mirror(idx)
+        for kind, url in fallbacks:
             async with httpx.AsyncClient(
                 headers=headers,
                 cookies=self._cookies,
@@ -229,17 +235,14 @@ class AllAnimeProvider(Provider):
                 timeout=REQUEST_TIMEOUT,
             ) as client:
                 try:
-                    resp = await client.post(graphql_url, json=payload)
+                    resp = await client.post(url, json=payload)
                 except (httpx.HTTPError, httpx.TimeoutException) as e:
-                    # Network error — try next mirror
                     last_error = e
                     continue
 
                 if _is_captcha_response(resp):
-                    # This mirror is captcha-walled — try the next one
                     last_error = CaptchaRequiredError(
-                        f"AllAnime mirror {idx} ({graphql_url}) returned "
-                        f"HTTP {resp.status_code}",
+                        f"AllAnime {kind} request returned HTTP {resp.status_code}",
                     )
                     continue
 
@@ -247,7 +250,7 @@ class AllAnimeProvider(Provider):
                     raw = resp.json()
                 except (ValueError, json.JSONDecodeError):
                     last_error = ProviderError(
-                        f"Mirror {idx} returned non-JSON: {resp.text[:200]}",
+                        f"{kind} returned non-JSON: {resp.text[:200]}",
                     )
                     continue
 
@@ -257,38 +260,55 @@ class AllAnimeProvider(Provider):
                     last_error = e
                     continue
 
-                # Success — remember this mirror for next time
-                self._working_mirror_idx = idx
+                # Success — remember which fallback worked
+                if kind == "direct":
+                    self._working_proxy_idx = None
+                elif kind == "proxy":
+                    self._working_proxy_idx = self.PUBLIC_PROXIES.index(
+                        next(p for p in self.PUBLIC_PROXIES if url.startswith(p.split("{")[0]))
+                    )
                 return raw
 
-        # All mirrors failed
+        # All fallbacks failed
         raise last_error or CaptchaRequiredError(
-            "All AllAnime API mirrors failed for /api/graphql",
+            "All AllAnime API fallbacks failed for /api/graphql",
         )
 
     async def _get_persisted(self, variables: dict) -> dict:
         """GET /api?variables=...&extensions=persistedQuery...
 
-        Tries each API mirror in order (same as _post_graphql), then falls
-        back to the CF Worker if configured. CaptchaRequiredError is raised
-        only when all mirrors AND the CF Worker fail.
+        Fallback order:
+          1. Direct request to api.allanime.day
+          2. Each public CORS proxy in PUBLIC_PROXIES
+          3. CF Worker (only if user configured allanime_cf_worker_url)
+
+        CaptchaRequiredError is raised only when ALL fallbacks fail.
         """
         extensions = {"persistedQuery": {"version": 1, "sha256Hash": EPISODE_QUERY_HASH}}
         params = {
             "variables": json.dumps(variables),
             "extensions": json.dumps(extensions),
         }
+        direct_url = f"{self.API_URL}?{urlencode(params)}"
 
-        order = list(range(len(self.API_MIRRORS)))
-        if self._working_mirror_idx is not None:
-            order.remove(self._working_mirror_idx)
-            order.insert(0, self._working_mirror_idx)
+        # Build the list of fallbacks to try
+        fallbacks: List[tuple] = [("direct", direct_url)]
+        for i in range(len(self.PUBLIC_PROXIES)):
+            fallbacks.append(("proxy", self._proxy_url(i, direct_url)))
+        if self.cf_worker_url:
+            fallbacks.append(("worker", _build_cf_worker_url(
+                self.cf_worker_url, direct_url,
+                extra_headers={"Referer": self.REFERER, "Origin": self.ORIGIN},
+            )))
+
+        # If a proxy previously worked, try it first
+        if self._working_proxy_idx is not None:
+            working = fallbacks[self._working_proxy_idx + 1]
+            fallbacks.remove(working)
+            fallbacks.insert(0, working)
 
         last_error: Optional[Exception] = None
-        for idx in order:
-            _gql_url, api_url, _base_url = self._mirror(idx)
-            direct_url = f"{api_url}?{urlencode(params)}"
-
+        for kind, url in fallbacks:
             async with httpx.AsyncClient(
                 headers=self._base_headers(),
                 cookies=self._cookies,
@@ -296,33 +316,14 @@ class AllAnimeProvider(Provider):
                 timeout=REQUEST_TIMEOUT,
             ) as client:
                 try:
-                    resp = await client.get(direct_url)
+                    resp = await client.get(url)
                 except (httpx.HTTPError, httpx.TimeoutException) as e:
                     last_error = e
                     continue
 
                 if _is_captcha_response(resp):
-                    # Try CF Worker fallback for this mirror (only the
-                    # persisted-query GET can go through a CF Worker — the
-                    # GraphQL POST can't because Workers are GET-only).
-                    if self.cf_worker_url:
-                        wrapped = _build_cf_worker_url(
-                            self.cf_worker_url, direct_url,
-                            extra_headers={"Referer": self.REFERER, "Origin": self.ORIGIN},
-                        )
-                        try:
-                            cf_resp = await client.get(wrapped)
-                            cf_ct = cf_resp.headers.get("content-type", "").lower()
-                            if cf_resp.status_code < 400 and "json" in cf_ct:
-                                raw = cf_resp.json()
-                                self._check_graphql_errors(raw)
-                                self._working_mirror_idx = idx
-                                return raw
-                        except (httpx.HTTPError, json.JSONDecodeError):
-                            pass
                     last_error = CaptchaRequiredError(
-                        f"AllAnime mirror {idx} ({api_url}) returned "
-                        f"HTTP {resp.status_code}",
+                        f"AllAnime {kind} request returned HTTP {resp.status_code}",
                     )
                     continue
 
@@ -330,7 +331,7 @@ class AllAnimeProvider(Provider):
                     raw = resp.json()
                 except (ValueError, json.JSONDecodeError):
                     last_error = ProviderError(
-                        f"Mirror {idx} returned non-JSON: {resp.text[:200]}",
+                        f"{kind} returned non-JSON: {resp.text[:200]}",
                     )
                     continue
 
@@ -340,11 +341,16 @@ class AllAnimeProvider(Provider):
                     last_error = e
                     continue
 
-                self._working_mirror_idx = idx
+                if kind == "direct":
+                    self._working_proxy_idx = None
+                elif kind == "proxy":
+                    self._working_proxy_idx = self.PUBLIC_PROXIES.index(
+                        next(p for p in self.PUBLIC_PROXIES if url.startswith(p.split("{")[0]))
+                    )
                 return raw
 
         raise last_error or CaptchaRequiredError(
-            "All AllAnime API mirrors failed for /api persisted query",
+            "All AllAnime API fallbacks failed for /api persisted query",
         )
 
     def _check_graphql_errors(self, raw: dict) -> None:
@@ -593,14 +599,10 @@ class AllAnimeProvider(Provider):
         (HLS or MP4) with resolution labels. We pick the highest-priority one.
         """
         full_path = path.replace("/clock", "/clock.json")
-        # Use the working mirror's base URL (or primary if none worked yet)
-        if self._working_mirror_idx is not None:
-            _g, _a, base_url = self._mirror(self._working_mirror_idx)
-        else:
-            base_url = self.ALLANIME_BASE
+        # clock.json paths are relative to allanime.day itself (not the API)
         full_url = (
             full_path if full_path.startswith("http")
-            else f"{base_url}{full_path}"
+            else f"{self.ALLANIME_BASE}{full_path}"
         )
 
         async with httpx.AsyncClient(

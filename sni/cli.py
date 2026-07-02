@@ -502,12 +502,12 @@ def config(
     if cookie_info:
         from sni.config import DEFAULT_COOKIES_PATH
         console.print(Panel(
-            "[bold green]First: try SNI without any of this.[/bold green]\n"
-            "SNI now tries multiple AllAnime API mirrors automatically\n"
-            "(api.allanime.day + api.allmanga.to) before giving up. Most users\n"
-            "never need cookies OR a CF Worker. Just run `sni play \"one piece\"`\n"
-            "directly — if it works, you're done.\n\n"
-            "[bold]If you DO hit a NEED_CAPTCHA error (all mirrors failed),[/bold]\n"
+            "[bold green]SNI now auto-fixes captcha — you probably don't need this.[/bold green]\n"
+            "When api.allanime.day captcha-walls your IP, SNI automatically\n"
+            "retries the request through a free public CORS proxy\n"
+            "(proxy.cors.sh). This happens silently, with zero setup. Just\n"
+            "run `sni play \"one piece\"` — if it works, you're done.\n\n"
+            "[bold]If you STILL hit a NEED_CAPTCHA error (all proxies failed),[/bold]\n"
             "[bold]try these in order:[/bold]\n\n"
             "[bold cyan]Option 1 - Browser cookies:[/bold cyan]\n"
             "  Get cookies from a working allanime mirror (NOT allanime.day which\n"
@@ -518,8 +518,8 @@ def config(
             "    sni config --update allanime_cookies='cf_clearance=...;'\n"
             "  Or write to file (easier to refresh):\n"
             f"    echo 'cf_clearance=...;' > {DEFAULT_COOKIES_PATH}\n\n"
-            "[bold yellow]Option 2 - Cloudflare Worker (only if cookies don't work[/bold yellow]\n"
-            "[bold yellow]and you're on a VPN/shared IP):[/bold yellow]\n"
+            "[bold yellow]Option 2 - Cloudflare Worker[/bold yellow]\n"
+            "[bold yellow](last resort for VPN/shared IPs):[/bold yellow]\n"
             "  Deploy the XAN CF Worker (free, requires Cloudflare account):\n"
             "    1. https://dash.cloudflare.com -> Workers & Pages -> Create\n"
             "    2. Paste XAN/cf-worker/worker.js from the XAN repo\n"
@@ -528,11 +528,7 @@ def config(
             "  Can't create a Cloudflare account? Deploy the same worker.js to:\n"
             "    - Deno Deploy (https://dash.deno.com) - free, no card required\n"
             "    - Vercel Edge Functions (https://vercel.com) - free tier\n"
-            "    - Netlify Functions (https://netlify.com) - free tier\n\n"
-            "[dim]Note: hianime and animepahe providers were removed in v1.2.0[/dim]\n"
-            "[dim](both were dead — hianime.to domain gone, animepahe API deprecated).[/dim]\n"
-            "[dim]AllAnime is now the only provider; the mirror fallback handles[/dim]\n"
-            "[dim]most captcha cases automatically.[/dim]",
+            "    - Netlify Functions (https://netlify.com) - free tier\n",
             title="AllAnime captcha bypass",
             border_style="cyan",
         ))

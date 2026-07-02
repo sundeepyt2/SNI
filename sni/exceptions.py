@@ -22,7 +22,8 @@ class CaptchaRequiredError(ProviderError):
 
     def __init__(self, message: str = "Provider requires captcha.", hint: str = ""):
         self.hint = hint or (
-            "All AllAnime API mirrors were captcha-walled. Two options:\n"
+            "All AllAnime endpoints + public proxy fallbacks were captcha-walled.\n"
+            "Two options:\n"
             "  1. Browser cookies from a working mirror (NOT allanime.day which\n"
             "     is broken with a redirect loop). Use allmanga.to or\n"
             "     allanime.uns.bio, then:\n"
