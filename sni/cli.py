@@ -142,6 +142,8 @@ async def _search(
             results.append((provider_name, hits))
         except CaptchaRequiredError:
             raise  # let the caller print the helpful panel
+        except ProviderError:
+            raise  # let the caller print the error
         except Exception as e:
             logger.exception(f"Search failed for '{query}' with provider '{provider_name}'")
             typer.echo(f"Search failed: {type(e).__name__}: {e}")
@@ -191,6 +193,9 @@ async def _play(
         results = await _search(query, provider_name, cookies=resolved_cookie)
     except CaptchaRequiredError as e:
         _print_captcha_help(e)
+        return
+    except ProviderError as e:
+        typer.echo(f"Error: {e}")
         return
     if not results:
         typer.echo("No results found.")
@@ -257,6 +262,9 @@ async def _watch(
     except CaptchaRequiredError as e:
         _print_captcha_help(e)
         return
+    except ProviderError as e:
+        typer.echo(f"Error: {e}")
+        return
     if not results:
         typer.echo("No results found.")
         return
@@ -304,6 +312,9 @@ async def _search_cmd(
             results = await _search(query, provider_name=provider_name, cookies=resolved)
         except CaptchaRequiredError as e:
             _print_captcha_help(e)
+            raise typer.Exit(code=1)
+        except ProviderError as e:
+            typer.echo(f"Error: {e}")
             raise typer.Exit(code=1)
 
     if not results:

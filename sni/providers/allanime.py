@@ -58,8 +58,8 @@ USER_AGENT = (
 REFERER = "https://youtu-chan.com"
 ORIGIN = "https://youtu-chan.com"
 
-REQUEST_TIMEOUT = 15.0
-CLOCK_TIMEOUT = 20.0
+REQUEST_TIMEOUT = 30.0  # increased from 15s — proxy connections can be slow
+CLOCK_TIMEOUT = 30.0
 
 # Regex used by the embed scraper to pull HLS / MP4 URLs out of HTML pages.
 # Mirrors XAN's scrapeEmbedPage regexes.
@@ -146,6 +146,44 @@ def _is_captcha_response(resp: httpx.Response) -> bool:
     return "just a moment" in body_start or "cf-mitigated" in resp.headers
 
 
+def _wrap_fallback_error(last_error: Optional[Exception], endpoint: str) -> Exception:
+    """Wrap a network/captcha error in a user-friendly ProviderError.
+
+    If the last error was already a CaptchaRequiredError, return it as-is
+    (it already has a helpful hint). If it was a network error (ConnectTimeout,
+    ReadTimeout, etc.), wrap it in a ProviderError with a clear message
+    explaining that SNI couldn't reach AllAnime and suggesting fixes.
+    """
+    if last_error is None:
+        return CaptchaRequiredError(f"AllAnime {endpoint} failed with no specific error")
+
+    if isinstance(last_error, CaptchaRequiredError):
+        return last_error
+
+    # Network errors (ConnectTimeout, ReadTimeout, ConnectError, etc.)
+    if isinstance(last_error, (httpx.TimeoutException, httpx.HTTPError)):
+        err_name = type(last_error).__name__
+        return ProviderError(
+            f"SNI could not connect to AllAnime ({err_name} on {endpoint}).\n\n"
+            f"This is a NETWORK issue, not a captcha. SNI tried direct + proxy.cors.sh "
+            f"but couldn't reach any of them.\n\n"
+            f"Possible causes:\n"
+            f"  1. Your internet is down or unstable\n"
+            f"  2. Your ISP/firewall blocks api.allanime.day or proxy.cors.sh\n"
+            f"  3. Your DNS can't resolve these hosts\n"
+            f"  4. You're on a restrictive network (school/work/country firewall)\n\n"
+            f"Try:\n"
+            f"  - Check your internet: curl -I https://api.allanime.day\n"
+            f"  - Try a different network (mobile hotspot, VPN)\n"
+            f"  - If on a VPN, try WITHOUT it (some VPNs are blocked)\n"
+            f"  - Check DNS: nslookup api.allanime.day\n"
+            f"  - Try again in a few minutes (temporary outage)"
+        )
+
+    # Any other exception — wrap it
+    return ProviderError(f"AllAnime {endpoint} failed: {type(last_error).__name__}: {last_error}")
+
+
 class AllAnimeProvider(Provider):
     name = "allanime"
     domain = "allanime.day"
@@ -161,12 +199,11 @@ class AllAnimeProvider(Provider):
 
     # Free public CORS proxies that support POST + JSON bodies. SNI tries
     # each one in order when the direct request to api.allanime.day is
-    # captcha-walled. proxy.cors.sh is the most reliable as of 2026; the
-    # others are kept as backup in case cors.sh ever rate-limits or goes
-    # down. Format: a format string with a single {url} placeholder.
+    # captcha-walled. As of 2026, most public CORS proxies have shut down
+    # or block POST. proxy.cors.sh is the only reliable one left.
+    # Format: a format string with a single {url} placeholder.
     PUBLIC_PROXIES = [
         "https://proxy.cors.sh/{url}",
-        "https://thingproxy.freeboard.io/fetch/{url}",
     ]
 
     def __init__(self, cookies: str = "", cf_worker_url: str = ""):
@@ -269,10 +306,8 @@ class AllAnimeProvider(Provider):
                     )
                 return raw
 
-        # All fallbacks failed
-        raise last_error or CaptchaRequiredError(
-            "All AllAnime API fallbacks failed for /api/graphql",
-        )
+        # All fallbacks failed — wrap the error in a user-friendly message
+        raise _wrap_fallback_error(last_error, "/api/graphql")
 
     async def _get_persisted(self, variables: dict) -> dict:
         """GET /api?variables=...&extensions=persistedQuery...
@@ -349,9 +384,7 @@ class AllAnimeProvider(Provider):
                     )
                 return raw
 
-        raise last_error or CaptchaRequiredError(
-            "All AllAnime API fallbacks failed for /api persisted query",
-        )
+        raise _wrap_fallback_error(last_error, "/api persisted query")
 
     def _check_graphql_errors(self, raw: dict) -> None:
         """Inspect a parsed GraphQL response for errors, raising the right
