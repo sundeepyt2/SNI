@@ -15,12 +15,12 @@ def test_config_defaults():
 def test_config_load_save():
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "config.toml"
-        cfg = Config(default_provider="animepahe", quality="720")
+        cfg = Config(default_provider="allanime", quality="720")
         cfg.save(path)
         assert path.exists()
 
         loaded = Config.load(path)
-        assert loaded.default_provider == "animepahe"
+        assert loaded.default_provider == "allanime"
         assert loaded.quality == "720"
 
 

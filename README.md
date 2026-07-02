@@ -13,7 +13,7 @@ A terminal-based anime streaming client inspired by [ani-cli](https://github.com
 
 ## Features
 
-- **Multi-provider support** — HiAnime (sub+dub), AllAnime (sub+dub), Animepahe (sub)
+- **Multi-mirror AllAnime support** — auto-tries api.allanime.day + api.allmanga.to on captcha
 - **Full TUI mode** — Rich terminal UI built with Textual
 - **Interactive CLI** — fzf-based selection with numbered-input fallback
 - **Watch history** — Resume from where you left off
@@ -240,9 +240,9 @@ sni config --update default_provider=allanime
 
 | Provider | Sub | Dub | Status |
 |----------|-----|-----|--------|
-| HiAnime | Yes | Yes | Active |
-| AllAnime | Yes | Yes | Active |
-| Animepahe | Yes | No | API deprecated |
+| AllAnime | Yes | Yes | Active (with multi-mirror auto-fallback) |
+
+> **Note:** HiAnime and Animepahe providers were removed in v1.2.0 — both were dead (hianime.to domain gone, animepahe API deprecated). AllAnime is now the only provider, but it auto-tries multiple API mirrors (api.allanime.day + api.allmanga.to) on captcha, so most users never see a captcha error.
 
 ---
 
@@ -303,19 +303,11 @@ sni tui
 
 ## AllAnime captcha fix
 
-**First: you probably don't need any of this.** SNI's XAN-port endpoint pattern (POST `/api/graphql` + GET `/api` persisted query) avoids Cloudflare's captcha heuristic on its own — most users can just run `sni play "one piece"` directly and it works.
+**First: you probably don't need any of this.** SNI now automatically tries multiple AllAnime API mirrors (`api.allanime.day` + `api.allmanga.to`) before giving up. Most users can just run `sni play "one piece"` directly and it works — if one mirror is captcha-walled, SNI silently falls back to the other.
 
-If you DO hit a `NEED_CAPTCHA` error, try these in order. Run `sni config --cookie-info` to see all options in a single panel.
+If you DO hit a `NEED_CAPTCHA` error (all mirrors failed), try these in order. Run `sni config --cookie-info` to see all options in a single panel.
 
-### Option 1 — Switch providers (fastest, zero setup)
-
-```bash
-sni play "one piece" -p hianime
-```
-
-HiAnime uses different infrastructure from AllAnime and is rarely captcha-walled. This is the recommended fix for most users — no setup, no accounts, no cookies.
-
-### Option 2 — Browser cookies (if you must use AllAnime and your IP isn't permanently flagged)
+### Option 1 — Browser cookies (if your IP isn't permanently flagged)
 
 Get cookies from a **working AllAnime mirror** — NOT `allanime.day` (which is currently broken with a redirect loop, see [Troubleshooting](#allanimeday-says-too-many-redirects)). Working mirrors include:
 
@@ -335,9 +327,9 @@ echo 'cf_clearance=...;' > ~/.config/sni/allanime_cookies.txt
 sni play "one piece" --cookie 'cf_clearance=...;'
 ```
 
-### Option 3 — Cloudflare Worker (only for VPN/shared IPs that are permanently captcha-walled AND cookies don't work)
+### Option 2 — Cloudflare Worker (only for VPN/shared IPs that are permanently captcha-walled AND cookies don't work)
 
-This is the most powerful bypass — it proxies AllAnime API requests through Cloudflare's own IPs, which AllAnime rarely challenges. Only set this up if Options 1 and 2 both fail.
+This is the most powerful bypass — it proxies AllAnime API requests through Cloudflare's own IPs, which AllAnime rarely challenges. Only set this up if Option 1 fails.
 
 **Deploy via Cloudflare** (free, requires a Cloudflare account):
 
@@ -402,11 +394,10 @@ If you just want to watch anime, skip the website entirely and run `sni play "on
 
 ### AllAnime `NEED_CAPTCHA` error
 
-See the [AllAnime captcha fix](#allanime-captcha-fix) section above. TL;DR in order of preference:
+SNI v1.2.0+ automatically tries multiple AllAnime API mirrors before giving up. If you still see this error, all mirrors failed. See the [AllAnime captcha fix](#allanime-captcha-fix) section above. TL;DR in order of preference:
 
-1. **Switch providers** (zero setup): `sni play "one piece" -p hianime`
-2. **Browser cookies** from a working mirror: `sni config --update allanime_cookies='cf_clearance=...;'`
-3. **CF Worker** (only for VPN/shared IPs): deploy the worker and `sni config --update allanime_cf_worker_url='https://...'`
+1. **Browser cookies** from a working mirror: `sni config --update allanime_cookies='cf_clearance=...;'`
+2. **CF Worker** (only for VPN/shared IPs): deploy the worker and `sni config --update allanime_cf_worker_url='https://...'`
 
 ### Python version too old
 
