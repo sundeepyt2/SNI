@@ -220,6 +220,10 @@ class AllAnimeProvider(Provider):
         # calls instead of trying the dead primary every time.
         # None = direct (no proxy), 0 = first public proxy, etc.
         self._working_proxy_idx: Optional[int] = None
+        # If the CF Worker returns 5xx (account suspended/deleted), we mark it
+        # disabled for the rest of the session so we don't keep hitting a dead
+        # URL and getting 503 errors on every request.
+        self._worker_disabled: bool = False
 
     def _base_headers(self, *, json_body: bool = False) -> Dict[str, str]:
         h = {
@@ -255,7 +259,7 @@ class AllAnimeProvider(Provider):
         fallbacks: List[tuple] = [("direct", self.GRAPHQL_URL)]
         for i in range(len(self.PUBLIC_PROXIES)):
             fallbacks.append(("proxy", self._proxy_url(i, self.GRAPHQL_URL)))
-        if self.cf_worker_url:
+        if self.cf_worker_url and not self._worker_disabled:
             # CF Worker v3 supports POST — body is forwarded as-is
             fallbacks.append(("worker", _build_cf_worker_url(
                 self.cf_worker_url, self.GRAPHQL_URL,
@@ -281,6 +285,18 @@ class AllAnimeProvider(Provider):
                     resp = await client.post(url, json=payload)
                 except (httpx.HTTPError, httpx.TimeoutException) as e:
                     last_error = e
+                    continue
+
+                # If the CF Worker returns 5xx, the worker is dead/suspended.
+                # Disable it for the rest of the session so we don't keep
+                # hitting a dead URL on every subsequent request.
+                if kind == "worker" and resp.status_code >= 500:
+                    self._worker_disabled = True
+                    last_error = ProviderError(
+                        f"Worker returned HTTP {resp.status_code} (worker may be "
+                        f"suspended or down). Worker disabled for this session. "
+                        f"Clear it with: sni config --update allanime_cf_worker_url=''"
+                    )
                     continue
 
                 if _is_captcha_response(resp):
@@ -336,7 +352,7 @@ class AllAnimeProvider(Provider):
         fallbacks: List[tuple] = [("direct", direct_url)]
         for i in range(len(self.PUBLIC_PROXIES)):
             fallbacks.append(("proxy", self._proxy_url(i, direct_url)))
-        if self.cf_worker_url:
+        if self.cf_worker_url and not self._worker_disabled:
             fallbacks.append(("worker", _build_cf_worker_url(
                 self.cf_worker_url, direct_url,
                 extra_headers={"Referer": self.REFERER, "Origin": self.ORIGIN},
@@ -360,6 +376,17 @@ class AllAnimeProvider(Provider):
                     resp = await client.get(url)
                 except (httpx.HTTPError, httpx.TimeoutException) as e:
                     last_error = e
+                    continue
+
+                # If the CF Worker returns 5xx, the worker is dead/suspended.
+                # Disable it for the rest of the session.
+                if kind == "worker" and resp.status_code >= 500:
+                    self._worker_disabled = True
+                    last_error = ProviderError(
+                        f"Worker returned HTTP {resp.status_code} (worker may be "
+                        f"suspended or down). Worker disabled for this session. "
+                        f"Clear it with: sni config --update allanime_cf_worker_url=''"
+                    )
                     continue
 
                 if _is_captcha_response(resp):
