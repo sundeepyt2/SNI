@@ -303,11 +303,43 @@ sni tui
 
 ## AllAnime captcha fix
 
-AllAnime sometimes blocks API requests with a Cloudflare captcha wall (`NEED_CAPTCHA` error). SNI ships with **three** bypass options. Run `sni config --cookie-info` to see them all in a single panel:
+**First: you probably don't need any of this.** SNI's XAN-port endpoint pattern (POST `/api/graphql` + GET `/api` persisted query) avoids Cloudflare's captcha heuristic on its own — most users can just run `sni play "one piece"` directly and it works.
 
-### Option 1 — Cloudflare Worker (recommended, most reliable)
+If you DO hit a `NEED_CAPTCHA` error, try these in order. Run `sni config --cookie-info` to see all options in a single panel.
 
-Deploy the XAN CF Worker (free, takes 2 minutes):
+### Option 1 — Switch providers (fastest, zero setup)
+
+```bash
+sni play "one piece" -p hianime
+```
+
+HiAnime uses different infrastructure from AllAnime and is rarely captcha-walled. This is the recommended fix for most users — no setup, no accounts, no cookies.
+
+### Option 2 — Browser cookies (if you must use AllAnime and your IP isn't permanently flagged)
+
+Get cookies from a **working AllAnime mirror** — NOT `allanime.day` (which is currently broken with a redirect loop, see [Troubleshooting](#allanimeday-says-too-many-redirects)). Working mirrors include:
+
+- https://allmanga.to
+- https://allanime.uns.bio
+
+Open one in your browser, solve any captcha, then copy the cookie string from DevTools → Application → Cookies. Save it:
+
+```bash
+# Option A — config key:
+sni config --update allanime_cookies='cf_clearance=...;'
+
+# Option B — cookies file (easier to refresh):
+echo 'cf_clearance=...;' > ~/.config/sni/allanime_cookies.txt
+
+# Option C — one-off flag:
+sni play "one piece" --cookie 'cf_clearance=...;'
+```
+
+### Option 3 — Cloudflare Worker (only for VPN/shared IPs that are permanently captcha-walled AND cookies don't work)
+
+This is the most powerful bypass — it proxies AllAnime API requests through Cloudflare's own IPs, which AllAnime rarely challenges. Only set this up if Options 1 and 2 both fail.
+
+**Deploy via Cloudflare** (free, requires a Cloudflare account):
 
 1. Go to https://dash.cloudflare.com → Workers & Pages → Create
 2. Paste the contents of [`cf-worker/worker.js`](https://github.com/smithmx20/XAN/blob/main/cf-worker/worker.js) from the XAN repo
@@ -318,33 +350,13 @@ Deploy the XAN CF Worker (free, takes 2 minutes):
    sni config --update allanime_cf_worker_url='https://xan-proxy.you.workers.dev'
    ```
 
-The Worker proxies AllAnime API requests through Cloudflare's own IPs, which AllAnime rarely challenges. **This works even on VPN/shared IPs where cookies fail.**
+**Can't create a Cloudflare account?** Deploy the same `worker.js` code to any of these alternative platforms (all have free tiers, none require a credit card):
 
-### Option 2 — Browser cookies
+- **Deno Deploy** (https://dash.deno.com) — free, no card required, fastest setup. Wrap the worker's `fetch` handler in a `Deno.serve()` call.
+- **Vercel Edge Functions** (https://vercel.com) — free tier. Adapt the handler to Vercel's `export default function handler(req: Request)` signature.
+- **Netlify Functions** (https://netlify.com) — free tier. Convert to Netlify's `exports.handler` format.
 
-If your IP isn't already flagged, browser cookies will work:
-
-```bash
-# Option A — config key:
-sni config --update allanime_cookies='k1=v1; k2=v2'
-
-# Option B — cookies file (easier to refresh):
-echo 'k1=v1; k2=v2' > ~/.config/sni/allanime_cookies.txt
-
-# Option C — one-off flag:
-sni play "one piece" --cookie 'k1=v1; k2=v2'
-```
-
-Get the cookie string from your browser:
-1. Open https://allanime.day, solve any captcha.
-2. DevTools → Application → Cookies → allanime.day.
-3. Copy the full cookie string.
-
-### Option 3 — Switch providers
-
-```bash
-sni play "one piece" -p hianime
-```
+The worker code is platform-agnostic — it's just a `fetch` handler that proxies a request. The only thing that changes between platforms is the entry-point wrapper.
 
 ---
 
@@ -375,9 +387,26 @@ fzf is optional — SNI falls back to numbered selection if it's missing. To ins
 - **macOS**: `brew install fzf`
 - **Windows**: `winget install junegunn.fzf`
 
+### `allanime.day` says "too many redirects"
+
+This is a **server-side bug on AllAnime's website** — not a problem with your browser, your cookies, or SNI. As of July 2026, `https://allanime.day` returns `Location: https://allanime.day//` (note the double slash), which redirects to itself infinitely. It affects everyone globally.
+
+**You don't need to visit allanime.day to use SNI.** SNI only talks to `api.allanime.day` (the API endpoint), which is independent of the broken website and is working normally.
+
+If you need to grab browser cookies for the [captcha bypass](#allanime-captcha-fix), use a **working mirror** instead:
+
+- https://allmanga.to
+- https://allanime.uns.bio
+
+If you just want to watch anime, skip the website entirely and run `sni play "one piece"` directly.
+
 ### AllAnime `NEED_CAPTCHA` error
 
-See the [AllAnime captcha fix](#allanime-captcha-fix) section above. TL;DR: deploy the Cloudflare Worker and run `sni config --update allanime_cf_worker_url='https://your-worker.workers.dev'`.
+See the [AllAnime captcha fix](#allanime-captcha-fix) section above. TL;DR in order of preference:
+
+1. **Switch providers** (zero setup): `sni play "one piece" -p hianime`
+2. **Browser cookies** from a working mirror: `sni config --update allanime_cookies='cf_clearance=...;'`
+3. **CF Worker** (only for VPN/shared IPs): deploy the worker and `sni config --update allanime_cf_worker_url='https://...'`
 
 ### Python version too old
 

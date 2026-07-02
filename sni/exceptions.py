@@ -17,21 +17,21 @@ class ProviderHealthError(ProviderError):
 class CaptchaRequiredError(ProviderError):
     """Raised when a provider (typically AllAnime) demands a captcha/cookies.
 
-    Carries an actionable, human-readable ``hint`` describing how to obtain
-    and supply browser cookies so the user can recover without reading docs.
+    Carries an actionable, human-readable ``hint`` describing how to recover.
     """
 
     def __init__(self, message: str = "Provider requires captcha.", hint: str = ""):
         self.hint = hint or (
-            "AllAnime's edge blocked this request. Two fixes:\n"
-            "  1. (Recommended) Deploy the XAN Cloudflare Worker and save its URL:\n"
-            "       sni config --update allanime_cf_worker_url='https://your-worker.workers.dev'\n"
-            "     The worker proxies requests through Cloudflare's own IPs, which\n"
-            "     AllAnime rarely challenges. Works even on VPN/shared IPs.\n"
-            "  2. Pass browser cookies:\n"
-            "       sni config --update allanime_cookies='k1=v1; k2=v2'\n"
-            "     (get the cookie string from DevTools -> Application -> Cookies on\n"
-            "     https://allanime.day).\n"
+            "AllAnime's edge blocked this request. Try in order:\n"
+            "  1. (Fastest) Switch provider: sni play 'X' -p hianime\n"
+            "  2. (If you must use allanime) Get cookies from a working mirror\n"
+            "     (https://allmanga.to or https://allanime.uns.bio — NOT\n"
+            "     allanime.day which is currently broken with a redirect loop)\n"
+            "     and save them:\n"
+            "       sni config --update allanime_cookies='cf_clearance=...;'\n"
+            "  3. (VPN/shared IPs only) Deploy the XAN CF Worker and save URL:\n"
+            "       sni config --update allanime_cf_worker_url='https://...'\n"
+            "     Can't use Cloudflare? Deno Deploy / Vercel / Netlify also work.\n"
             "Run `sni config --cookie-info` for full step-by-step instructions."
         )
         super().__init__(f"{message}\n{self.hint}")
