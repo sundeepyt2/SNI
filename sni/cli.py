@@ -1,3 +1,16 @@
+"""SNI CLI — Stream Ninja Interface v2.0
+
+Commands:
+  sni "one piece"          Search and play (sub)
+  sni play "one piece"     Same as above
+  sni-d "one piece"        Search and play (dub)
+  sni search "one piece"   Search only
+  sni tui                  Terminal UI mode
+  sni config               Show/set config
+  sni --version            Show version
+  sni --debug play "X"     Debug mode (verbose mpv output)
+"""
+
 import asyncio
 import os
 import sys
@@ -6,600 +19,323 @@ from typing import Optional
 import typer
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Prompt
+from rich.table import Table
 
 from sni import __version__
+from sni.allanime import AllAnimeClient, Episode
+from sni.anilist import AnimeResult, search_anime
 from sni.config import DEFAULT_CONFIG_PATH, Config
-from sni.exceptions import CaptchaRequiredError, ProviderError, ProviderNotFoundError
-from sni.logger import setup_logger
+from sni.exceptions import PlayerError, StreamError
 from sni.player import Player
-from sni.providers.base import AnimeResult, Provider
-from sni.providers.registry import ProviderRegistry
-from sni.ui import (
-    display_episodes,
-    display_results,
-    format_anime_row,
-    prompt_next_episode,
-    select_episode_fzf,
-    select_with_fzf,
-    show_now_playing,
-)
-from sni.watch_history import WatchHistory
-from sni.wizard import run_wizard
 
+# Detect if we're running as sni-d (dub mode)
 _IS_DUB = os.path.splitext(os.path.basename(sys.argv[0]))[0] in ("sni-d", "sni_dub")
 
 app = typer.Typer(
     name="sni",
-    help="Stream Ninja Interface - Anime CLI",
-    no_args_is_help=False,
+    help="Stream Ninja Interface — terminal anime streaming",
+    no_args_is_help=True,
+    add_completion=False,
 )
-logger = setup_logger()
 console = Console()
-_DEBUG = False  # set to True by --debug flag
+_DEBUG = False
 
 
-def _resolve_cookies(provider_name: str, cfg: Config, cookie_flag: Optional[str]) -> str:
-    """Resolve cookies for ``provider_name``.
-
-    Precedence: explicit ``--cookie`` flag > config-stored cookies. Currently
-    only AllAnime uses cookies; other providers ignore the value.
-    """
-    if cookie_flag:
-        return cookie_flag
-    if provider_name == "allanime":
-        return cfg.get_allanime_cookies()
-    return ""
+def _get_client() -> AllAnimeClient:
+    cfg = Config.load()
+    return AllAnimeClient(cf_worker_url=cfg.get_cf_worker_url())
 
 
-def _instantiate_provider(provider_name: str, cfg: Config, cookie_flag: Optional[str] = None):
-    """Instantiate a provider, injecting config-stored credentials.
-
-    For AllAnime this means cookies AND the optional CF Worker URL.
-    """
-    cls = ProviderRegistry.get(provider_name)
-    if cls is None:
+def _select_anime(results: list[AnimeResult]) -> Optional[AnimeResult]:
+    """Let user select an anime from search results."""
+    if not results:
+        console.print("[red]No results found.[/red]")
         return None
-    if provider_name == "allanime":
-        return cls(
-            cookies=_resolve_cookies(provider_name, cfg, cookie_flag),
-            cf_worker_url=cfg.get_allanime_cf_worker_url(),
+
+    # Try fzf first
+    try:
+        import subprocess
+        lines = []
+        for i, r in enumerate(results, 1):
+            eps = f"{r.episodes} eps" if r.episodes else "?"
+            score = f"{r.score}/100" if r.score else ""
+            lines.append(f"{i}. {r.title} ({eps}) {score}")
+        proc = subprocess.run(
+            ["fzf", "--prompt=Select anime: ", "--height=40%", "--reverse"],
+            input="\n".join(lines),
+            capture_output=True,
+            text=True,
         )
-    return cls()
+        if proc.returncode == 0 and proc.stdout.strip():
+            # Parse selected line number
+            selected = proc.stdout.strip()
+            idx = int(selected.split(".")[0]) - 1
+            return results[idx]
+    except (FileNotFoundError, ValueError, IndexError):
+        pass
+
+    # Fallback: numbered selection
+    table = Table(title="Search Results", show_header=True)
+    table.add_column("#", style="cyan", width=4)
+    table.add_column("Title", style="white")
+    table.add_column("Episodes", style="green", width=10)
+    table.add_column("Score", style="yellow", width=8)
+    for i, r in enumerate(results, 1):
+        eps = str(r.episodes) if r.episodes else "?"
+        score = f"{r.score}" if r.score else ""
+        table.add_row(str(i), r.title, eps, score)
+    console.print(table)
+
+    from rich.prompt import IntPrompt
+    choice = IntPrompt.ask("Select", default=1)
+    if 1 <= choice <= len(results):
+        return results[choice - 1]
+    return None
 
 
-def _print_captcha_help(err: CaptchaRequiredError) -> None:
-    console.print(Panel(
-        f"[bold red]AllAnime captcha required[/bold red]\n\n{err.hint}",
-        title="Action needed",
-        border_style="red",
-    ))
+def _select_episode(episodes: list[Episode], title: str) -> Optional[Episode]:
+    """Let user select an episode."""
+    if not episodes:
+        console.print("[red]No episodes found.[/red]")
+        return None
+
+    console.print(f"\n[bold green]{title}[/bold green] — {len(episodes)} episodes available")
+    from rich.prompt import Prompt
+    choice = Prompt.ask(
+        f"Episode (1-{len(episodes)}, or 'range' like 1-12)",
+        default="1"
+    )
+    try:
+        if "-" in choice:
+            parts = choice.split("-")
+            start = int(parts[0])
+            # Just return the first episode in range; the play loop will continue
+            idx = start - 1
+        else:
+            idx = int(choice) - 1
+        if 0 <= idx < len(episodes):
+            return episodes[idx]
+    except (ValueError, IndexError):
+        pass
+    return episodes[0] if episodes else None
 
 
-def version_callback(value: bool):
-    if value:
-        typer.echo(f"sni v{__version__}")
-        raise typer.Exit()
+async def _find_allanime_show(title: str) -> Optional[str]:
+    """Search AllAnime by title and return the best match's ID."""
+    client = _get_client()
+    results = await client.search(title, limit=5)
+    if not results:
+        return None
+    # Return the first result (most relevant)
+    return results[0]["id"]
 
 
-@app.callback(invoke_without_command=True)
-def main(
-    ctx: typer.Context,
-    version: bool = typer.Option(
-        False, "--version", help="Show version", callback=version_callback,
-    ),
-    debug: bool = typer.Option(False, "--debug", help="Enable debug logging"),
-):
-    global logger, _DEBUG
-    if debug:
-        _DEBUG = True
-        logger = setup_logger(debug=True)
-    if ctx.invoked_subcommand is None:
-        asyncio.run(_interactive())
+async def _play_anime(anime: AnimeResult, start_ep: int = 1, dub: bool = False, quality: str = "1080"):
+    """Play an anime from a specific episode."""
+    # Find the show on AllAnime
+    console.print(f"[dim]Searching AllAnime for: {anime.title}...[/dim]")
+    show_id = await _find_allanime_show(anime.title)
+    if not show_id:
+        console.print(f"[red]Could not find '{anime.title}' on AllAnime.[/red]")
+        return
 
+    # Get episodes
+    client = _get_client()
+    episodes = await client.get_episodes(show_id)
+    if not episodes:
+        console.print("[red]No episodes found.[/red]")
+        return
 
-async def _search(
-    query: str,
-    provider_name: Optional[str] = None,
-    all_providers: bool = False,
-    cookies: Optional[str] = None,
-    cf_worker_url: Optional[str] = None,
-) -> list[tuple[str, list[AnimeResult]]]:
-    results: list[tuple[str, list[AnimeResult]]] = []
+    # Find the starting episode
+    start_idx = 0
+    for i, ep in enumerate(episodes):
+        if ep.number >= start_ep:
+            start_idx = i
+            break
+
+    # Play episodes starting from start_idx
     cfg = Config.load()
+    player = Player(player=cfg.player, use_ipc=cfg.use_ipc, debug=_DEBUG)
 
-    def _instantiate(pname: str) -> Optional[Provider]:
-        cls = ProviderRegistry.get(pname)
-        if cls is None:
-            return None
-        if pname == "allanime":
-            return cls(
-                cookies=cookies or (cfg.get_allanime_cookies() if not cookies else ""),
-                cf_worker_url=cf_worker_url or cfg.get_allanime_cf_worker_url(),
-            )
-        return cls()
+    current_idx = start_idx
+    while current_idx < len(episodes):
+        ep = episodes[current_idx]
+        total = len(episodes)
 
-    if all_providers:
-        for pname in ProviderRegistry.list():
-            provider = _instantiate(pname)
-            if provider is None:
-                continue
-            try:
-                hits = await provider.search(query)
-                results.append((pname, hits))
-            except CaptchaRequiredError:
-                # Captcha is provider-specific; re-raise only when this is the
-                # user's selected provider so the panel shows. Otherwise log.
-                logger.warning(f"{pname} returned captcha; skipping in --all-providers mode")
-            except Exception as e:
-                logger.exception(f"{pname} search failed for '{query}'")
-                logger.warning(f"{pname} search failed: {type(e).__name__}: {e}")
-    elif provider_name:
-        provider = _instantiate(provider_name)
-        if provider is None:
-            typer.echo(f"Unknown provider: {provider_name}")
-            return results
+        console.print(f"\n[bold]Now Playing: {anime.title} - Episode {ep.number}/{total}[/bold]")
+        if dub:
+            console.print("[dim](dub)[/dim]")
+
         try:
-            hits = await provider.search(query)
-            results.append((provider_name, hits))
-        except CaptchaRequiredError:
-            raise  # let the caller print the helpful panel
-        except ProviderError:
-            raise  # let the caller print the error
-        except Exception as e:
-            logger.exception(f"Search failed for '{query}' with provider '{provider_name}'")
-            typer.echo(f"Search failed: {type(e).__name__}: {e}")
-    else:
-        preferred = cfg.default_provider
-        order = ProviderRegistry.get_fallback_order(preferred)
-        for pname in order:
-            provider = _instantiate(pname)
-            if provider is None:
-                continue
-            try:
-                hits = await provider.search(query)
-                if hits:
-                    results.append((pname, hits))
-            except CaptchaRequiredError:
-                if pname == preferred:
-                    raise
-                logger.warning(f"{pname} returned captcha; skipped")
-            except Exception:
-                pass
+            stream = await client.get_streams(ep.id, quality=quality, dub=dub)
+        except StreamError as e:
+            console.print(f"[red]Stream error: {e}[/red]")
+            # Try next episode
+            current_idx += 1
+            continue
 
-    return results
+        # Show stream info in debug mode
+        if _DEBUG:
+            console.print(f"[dim]Stream URL: {stream.url[:100]}...[/dim]")
+            console.print(f"[dim]Headers: {stream.headers}[/dim]")
 
+        try:
+            player.play(stream, quality)
+            player.wait()
+        except PlayerError as e:
+            console.print(f"[red]{e}[/red]")
+            break
 
-async def _interactive():
-    mode = Prompt.ask("Mode", choices=["play", "watch"], default="play")
-    query = Prompt.ask("Search for anime")
-    if mode == "play":
-        await _play(query, None, None, _IS_DUB, None, None)
-    else:
-        await _watch(query, None, None, _IS_DUB, None, None, False)
+        current_idx += 1
+        if current_idx < len(episodes):
+            from rich.prompt import Prompt
+            action = Prompt.ask(
+                f"\nNext: episode {episodes[current_idx].number}? [Enter=next / q=quit]",
+                default="",
+            )
+            if action.lower().startswith("q"):
+                break
 
 
-async def _play(
-    query: str,
-    provider: Optional[str],
-    quality: Optional[str],
-    dub: bool,
-    episodes: Optional[str],
-    cookie: Optional[str],
+@app.command()
+def play(
+    query: str = typer.Argument(None, help="Anime title to search"),
+    episode: int = typer.Option(1, "--episode", "-e", help="Starting episode number"),
+    quality: str = typer.Option(None, "--quality", "-q", help="Stream quality (360/480/720/1080)"),
+    dub: bool = typer.Option(_IS_DUB, "--dub", "-d", help="Play dubbed version"),
 ):
-    cfg = Config.load()
-    provider_name = provider or cfg.default_provider
-    resolved_cookie = _resolve_cookies(provider_name, cfg, cookie)
-
-    try:
-        results = await _search(query, provider_name, cookies=resolved_cookie)
-    except CaptchaRequiredError as e:
-        _print_captcha_help(e)
-        return
-    except ProviderError as e:
-        typer.echo(f"Error: {e}")
-        return
-    if not results:
-        typer.echo("No results found.")
-        return
-
-    all_anime = [a for _, hits in results for a in hits]
-    selected = await select_with_fzf(all_anime, format_fn=format_anime_row)
-    if not selected:
-        typer.echo("No selection made.")
-        return
-
-    await _watch_anime(selected, provider_name, dub, quality, episodes, resolved_cookie)
-
-
-async def _watch(
-    query: Optional[str],
-    provider: Optional[str],
-    quality: Optional[str],
-    dub: bool,
-    episodes: Optional[str],
-    cookie: Optional[str],
-    resume: bool = False,
-):
-    cfg = Config.load()
-    provider_name = provider or cfg.default_provider
-    resolved_cookie = _resolve_cookies(provider_name, cfg, cookie)
-
-    if resume:
-        history = WatchHistory()
-        entries = history.get_continue()
-        if not entries:
-            typer.echo("No watch history found.")
-            return
-
-        display_results(
-            [AnimeResult(id=e["anime_id"], title=e["anime_title"]) for e in entries],
-            provider="history",
-        )
-        selected_entry = await select_with_fzf(
-            entries,
-            format_fn=lambda e, i: f"{i + 1}. {e['anime_title']} (ep {e['last_episode']})",
-        )
-        if not selected_entry:
-            typer.echo("No selection made.")
-            return
-
-        provider_name = selected_entry["provider"]
-        selected = AnimeResult(
-            id=selected_entry["anime_id"],
-            title=selected_entry["anime_title"],
-        )
-        ep_str = str(selected_entry["last_episode"])
-        # Resume uses the original provider; re-resolve cookies for it.
-        resolved_cookie = _resolve_cookies(provider_name, cfg, cookie)
-        await _watch_anime(selected, provider_name, dub, quality, ep_str, resolved_cookie)
-        return
-
+    """Search and play an anime."""
     if not query:
-        typer.echo("Please provide a search query or use --resume.")
-        return
+        from rich.prompt import Prompt
+        query = Prompt.ask("Search for anime")
 
-    try:
-        results = await _search(query, provider_name, cookies=resolved_cookie)
-    except CaptchaRequiredError as e:
-        _print_captcha_help(e)
-        return
-    except ProviderError as e:
-        typer.echo(f"Error: {e}")
-        return
-    if not results:
-        typer.echo("No results found.")
-        return
+    async def _run():
+        # Search via AniList (reliable, no captcha)
+        console.print(f"[dim]Searching AniList for: {query}...[/dim]")
+        results = await search_anime(query)
+        if not results:
+            console.print("[red]No results found.[/red]")
+            return
 
-    all_anime = [a for _, hits in results for a in hits]
-    selected = await select_with_fzf(all_anime, format_fn=format_anime_row)
-    if not selected:
-        typer.echo("No selection made.")
-        return
+        # Let user select
+        selected = _select_anime(results)
+        if not selected:
+            return
 
-    await _watch_anime(selected, provider_name, dub, quality, episodes, resolved_cookie)
+        # Get quality from config if not specified
+        cfg = Config.load()
+        q = quality or cfg.quality
+
+        # Play
+        await _play_anime(selected, start_ep=episode, dub=dub, quality=q)
+
+    asyncio.run(_run())
 
 
 @app.command()
 def search(
     query: str = typer.Argument(..., help="Anime title to search"),
-    provider: Optional[str] = typer.Option(None, "--provider", "-p", help="Provider to use"),
-    all_providers: bool = typer.Option(False, "--all-providers", help="Search all providers"),
-    cookie: Optional[str] = typer.Option(
-        None, "--cookie", help="Browser cookies for providers that need them (allanime)",
-    ),
 ):
-    """Search for anime."""
-    asyncio.run(_search_cmd(query, provider, all_providers, cookie))
+    """Search for anime (display results, don't play)."""
+    async def _run():
+        results = await search_anime(query)
+        if not results:
+            console.print("[red]No results found.[/red]")
+            return
 
+        table = Table(title=f"Search Results for '{query}'", show_header=True)
+        table.add_column("#", style="cyan", width=4)
+        table.add_column("Title", style="white")
+        table.add_column("Episodes", style="green", width=10)
+        table.add_column("Score", style="yellow", width=8)
+        for i, r in enumerate(results, 1):
+            eps = str(r.episodes) if r.episodes else "?"
+            score = f"{r.score}" if r.score else ""
+            table.add_row(str(i), r.title, eps, score)
+        console.print(table)
 
-async def _search_cmd(
-    query: str,
-    provider: Optional[str],
-    all_providers: bool,
-    cookie: Optional[str] = None,
-):
-    cfg = Config.load()
-    if all_providers:
-        # When iterating all providers we still want config cookies for allanime.
-        results = await _search(
-            query,
-            all_providers=True,
-            cookies=cfg.get_allanime_cookies() if not cookie else cookie,
-        )
-    else:
-        provider_name = provider or cfg.default_provider
-        resolved = _resolve_cookies(provider_name, cfg, cookie)
-        try:
-            results = await _search(query, provider_name=provider_name, cookies=resolved)
-        except CaptchaRequiredError as e:
-            _print_captcha_help(e)
-            raise typer.Exit(code=1)
-        except ProviderError as e:
-            typer.echo(f"Error: {e}")
-            raise typer.Exit(code=1)
-
-    if not results:
-        typer.echo("No results found.")
-        raise typer.Exit()
-
-    all_anime = []
-    for pname, hits in results:
-        display_results(hits, provider=pname)
-        all_anime.extend(hits)
-
-    selected = await select_with_fzf(all_anime, format_fn=format_anime_row)
-    if selected:
-        typer.echo(f"Selected: {selected.title} (id: {selected.id})")
-
-
-async def _play_episode(
-    player: Player,
-    prov,
-    episode,
-    anime_title: str,
-    total_eps: int,
-    quality: str,
-    dub: bool,
-):
-    try:
-        streams = await prov.get_streams(episode.id, quality, dub)
-    except CaptchaRequiredError as e:
-        _print_captcha_help(e)
-        return False
-    except ProviderError as e:
-        msg = str(e)
-        if dub and ("dub" in msg.lower() or "server" in msg.lower()):
-            typer.echo("Dub not available for this episode.")
-        else:
-            typer.echo(f"Stream error: {e}")
-        return False
-
-    if not streams:
-        if dub:
-            typer.echo("Dub not available for this episode.")
-        else:
-            typer.echo("No streams available.")
-        return False
-
-    stream = streams[0]
-    show_now_playing(anime_title, episode.number, total_eps, stream.quality)
-    try:
-        player.play(stream, quality, subtitles=True)
-        player.wait()
-    except Exception as e:
-        typer.echo(f"Playback error: {e}")
-        return False
-    return True
-
-
-async def _watch_anime(
-    selected: AnimeResult,
-    provider_name: str,
-    dub: bool,
-    quality: str,
-    episodes: Optional[str],
-    cookie: Optional[str] = None,
-):
-    cfg = Config.load()
-    q = quality or cfg.quality
-    translate_dub = dub or (cfg.translation_type == "dub")
-
-    provider_cls = ProviderRegistry.get(provider_name)
-    if not provider_cls:
-        raise ProviderNotFoundError(f"Unknown provider: {provider_name}")
-    # Use the shared instantiator so AllAnime gets BOTH cookies AND cf_worker_url.
-    prov = _instantiate_provider(provider_name, cfg, cookie)
-    if prov is None:
-        raise ProviderNotFoundError(f"Unknown provider: {provider_name}")
-
-    ep_list = await prov.get_episodes(selected.id)
-    if not ep_list:
-        typer.echo("No episodes found.")
-        raise typer.Exit()
-
-    ep_list.sort(key=lambda e: e.number)
-
-    display_episodes(ep_list, selected.title)
-
-    if episodes:
-        try:
-            parts = episodes.split("-")
-            start_num = int(parts[0])
-            if len(parts) > 1:
-                end_num = int(parts[1])
-                ep_list = [e for e in ep_list if start_num <= e.number <= end_num]
-            else:
-                ep_list = [e for e in ep_list if e.number >= start_num]
-        except (ValueError, IndexError):
-            pass
-    else:
-        chosen = await select_episode_fzf(ep_list)
-        if not chosen:
-            typer.echo("No episode selected.")
-            raise typer.Exit()
-        start_idx = ep_list.index(chosen)
-        ep_list = ep_list[start_idx:]
-
-    player = Player(player=cfg.player, use_ipc=cfg.use_ipc, debug=_DEBUG)
-    if not player.available:
-        typer.echo(f"{cfg.player} is not installed.")
-        raise typer.Exit()
-
-    history = WatchHistory()
-    current_idx = 0
-
-    while current_idx < len(ep_list):
-        ep = ep_list[current_idx]
-        last_num = ep_list[-1].number
-        ok = await _play_episode(player, prov, ep, selected.title, last_num, q, translate_dub)
-        if not ok:
-            break
-
-        history.add_entry(
-            anime_title=selected.title,
-            anime_id=selected.id,
-            provider=provider_name,
-            episode_num=ep.number,
-            episode_id=ep.id,
-        )
-
-        current_idx += 1
-        if current_idx >= len(ep_list):
-            typer.echo(f"[green]Finished watching {selected.title}![/green]")
-            break
-
-        action = prompt_next_episode(ep.number, ep_list[-1].number)
-        if action == "q":
-            break
-        elif action == "p":
-            current_idx = max(0, current_idx - 2)
-        elif action == "s":
-            chosen = await select_episode_fzf(ep_list[current_idx:])
-            if chosen:
-                current_idx = ep_list.index(chosen)
-        elif action == "n":
-            pass
-
-
-@app.command()
-def play(
-    query: str = typer.Argument(None, help="Anime title to search and play"),
-    provider: Optional[str] = typer.Option(None, "--provider", "-p", help="Provider to use"),
-    quality: Optional[str] = typer.Option(None, "--quality", "-q", help="Stream quality"),
-    dub: bool = typer.Option(_IS_DUB, "--dub", "-d", help="Use dubbed version"),
-    episodes: Optional[str] = typer.Option(
-        None, "--episodes", "-e", help="Episode range (e.g. 1-12)",
-    ),
-    cookie: Optional[str] = typer.Option(
-        None, "--cookie", help="Browser cookies for providers that need them (allanime)",
-    ),
-):
-    """Search and play an anime (ani-cli like interactive flow)."""
-    asyncio.run(_play(query, provider, quality, dub, episodes, cookie))
-
-
-@app.command()
-def watch(
-    query: Optional[str] = typer.Argument(None, help="Anime title to search and watch"),
-    provider: Optional[str] = typer.Option(None, "--provider", "-p", help="Provider to use"),
-    quality: Optional[str] = typer.Option(None, "--quality", "-q", help="Stream quality"),
-    dub: bool = typer.Option(_IS_DUB, "--dub", "-d", help="Use dubbed version"),
-    episodes: Optional[str] = typer.Option(
-        None, "--episodes", "-e", help="Episode range (e.g. 1-12)",
-    ),
-    resume: bool = typer.Option(False, "--resume", "-r", help="Continue watching from history"),
-    cookie: Optional[str] = typer.Option(
-        None, "--cookie", help="Browser cookies for providers that need them (allanime)",
-    ),
-):
-    """Watch anime with ani-cli like interactive flow. Supports continue/resume."""
-    asyncio.run(_watch(query, provider, quality, dub, episodes, cookie, resume))
-
-
-@app.command()
-def config(
-    path: bool = typer.Option(False, "--path", help="Show config path"),
-    edit: bool = typer.Option(False, "--edit", help="Open config in editor"),
-    interactive: bool = typer.Option(False, "--interactive", help="Interactive config wizard"),
-    update: Optional[str] = typer.Option(None, "--update", help="Update config key=value"),
-    cookie_info: bool = typer.Option(
-        False, "--cookie-info", help="Show how to set AllAnime cookies to bypass captcha",
-    ),
-):
-    """Manage configuration."""
-    if path:
-        typer.echo(str(DEFAULT_CONFIG_PATH))
-        return
-
-    if cookie_info:
-        from sni.config import DEFAULT_COOKIES_PATH
-        console.print(Panel(
-            "[bold green]SNI now auto-fixes captcha — you probably don't need this.[/bold green]\n"
-            "When api.allanime.day captcha-walls your IP, SNI automatically\n"
-            "retries the request through a free public CORS proxy\n"
-            "(proxy.cors.sh). This happens silently, with zero setup. Just\n"
-            "run `sni play \"one piece\"` — if it works, you're done.\n\n"
-            "[bold]If you STILL hit a NEED_CAPTCHA error (all proxies failed),[/bold]\n"
-            "[bold]try these in order:[/bold]\n\n"
-            "[bold cyan]Option 1 - Browser cookies:[/bold cyan]\n"
-            "  Get cookies from a working allanime mirror (NOT allanime.day which\n"
-            "  is currently broken with a redirect loop). Working mirrors:\n"
-            "    - https://allmanga.to\n"
-            "    - https://allanime.uns.bio\n"
-            "  Save them:\n"
-            "    sni config --update allanime_cookies='cf_clearance=...;'\n"
-            "  Or write to file (easier to refresh):\n"
-            f"    echo 'cf_clearance=...;' > {DEFAULT_COOKIES_PATH}\n\n"
-            "[bold yellow]Option 2 - Self-hosted proxy worker[/bold yellow]\n"
-            "[bold yellow](last resort for VPN/shared IPs):[/bold yellow]\n"
-            "  SNI ships worker code in the worker/ directory. Deploy to ANY of:\n"
-            "    - Deno Deploy (recommended): https://dash.deno.com -> Playground\n"
-            "      Paste worker/proxy.deno.js -> Save & Deploy. ~2 min, no card.\n"
-            "    - Vercel Edge Functions: https://vercel.com (3 min)\n"
-            "    - Cloudflare Workers: https://dash.cloudflare.com (5 min, flaky)\n"
-            "  See worker/README.md in the repo for full step-by-step.\n"
-            "  Then save the URL:\n"
-            "    sni config --update allanime_cf_worker_url='https://your-deployment'\n",
-            title="AllAnime captcha bypass",
-            border_style="cyan",
-        ))
-        return
-
-    if interactive:
-        run_wizard(DEFAULT_CONFIG_PATH)
-        return
-
-    cfg = Config.load()
-    if edit:
-        import subprocess
-        editor = "vim"
-        subprocess.call([editor, str(DEFAULT_CONFIG_PATH)])
-    elif update:
-        key, _, value = update.partition("=")
-        if hasattr(cfg, key):
-            current = getattr(cfg, key)
-            typed_val: str | int | bool = value
-            if isinstance(current, bool):
-                typed_val = value.lower() in ("true", "1", "yes")
-            elif isinstance(current, int):
-                typed_val = int(value)
-            setattr(cfg, key, typed_val)
-            cfg.save()
-            typer.echo(f"Updated {key}={typed_val}")
-            if key == "allanime_cookies" and typed_val:
-                typer.echo("AllAnime cookies saved. Future sni commands will reuse them.")
-        else:
-            typer.echo(f"Unknown key: {key}")
-    else:
-        typer.echo(f"Config path: {DEFAULT_CONFIG_PATH}")
-        has_cookies = bool(cfg.get_allanime_cookies())
-        typer.echo(f"AllAnime cookies: {'set' if has_cookies else 'not set'}")
-
-
-@app.command()
-def provider(
-    action: str = typer.Argument("list", help="Action: list, status"),
-    name: Optional[str] = typer.Option(None, "--name", "-n", help="Provider name"),
-):
-    """Manage providers."""
-    if action == "list":
-        typer.echo("Available providers:")
-        for p in ProviderRegistry.list():
-            typer.echo(f"  - {p}")
-    elif action == "status":
-        typer.echo("Checking provider health...")
-        status = asyncio.run(ProviderRegistry.health_check_all())
-        for p, ok in status.items():
-            icon = "\u2713" if ok else "\u2717"
-            typer.echo(f"  {icon} {p}")
+    asyncio.run(_run())
 
 
 @app.command()
 def tui():
     """Launch the Terminal UI."""
-    from sni.tui.app import SNIApp
-    SNIApp().run()
+    from sni.tui import run_tui
+    run_tui()
+
+
+@app.command()
+def config(
+    show: bool = typer.Option(False, "--show", help="Show current config"),
+    update: Optional[str] = typer.Option(None, "--update", help="Update config key=value"),
+    cookie_info: bool = typer.Option(False, "--cookie-info", help="Show captcha bypass info"),
+):
+    """Manage configuration."""
+    if cookie_info:
+        console.print(Panel(
+            "[bold green]SNI v2.0 auto-fixes captcha.[/bold green]\n"
+            "When AllAnime captcha-walls your IP, SNI automatically retries\n"
+            "through proxy.cors.sh (a free public proxy). Zero setup needed.\n\n"
+            "[bold]If you STILL get errors (all proxies failed):[/bold]\n\n"
+            "[bold cyan]Option 1 — Browser cookies:[/bold cyan]\n"
+            "  Get cookies from allmanga.to, then:\n"
+            "    sni config --update allanime_cookies='cf_clearance=...;'\n\n"
+            "[bold yellow]Option 2 — CF Worker (for VPN/shared IPs):[/bold yellow]\n"
+            "  Deploy worker code (see worker/ directory in the repo):\n"
+            "    - Deno Deploy: https://dash.deno.com -> Playground -> paste main.ts\n"
+            "    - Vercel: https://vercel.com -> api/proxy.js\n"
+            "    - Cloudflare Workers: https://dash.cloudflare.com\n"
+            "  Then save:\n"
+            "    sni config --update allanime_cf_worker_url='https://your-deployment'",
+            title="AllAnime captcha bypass",
+            border_style="cyan",
+        ))
+        return
+
+    cfg = Config.load()
+    if update:
+        key, _, value = update.partition("=")
+        if hasattr(cfg, key):
+            current = getattr(cfg, key)
+            if isinstance(current, bool):
+                value = value.lower() in ("true", "1", "yes")
+            elif isinstance(current, int):
+                value = int(value)
+            setattr(cfg, key, value)
+            cfg.save()
+            console.print(f"[green]Updated {key}={value}[/green]")
+        else:
+            console.print(f"[red]Unknown key: {key}[/red]")
+            console.print("Available keys: player, quality, use_ipc, allanime_cf_worker_url, selector, icons")
+    else:
+        console.print(f"[bold]Config path:[/bold] {DEFAULT_CONFIG_PATH}")
+        console.print(f"  player: {cfg.player}")
+        console.print(f"  quality: {cfg.quality}")
+        console.print(f"  use_ipc: {cfg.use_ipc}")
+        console.print(f"  cf_worker_url: {cfg.get_cf_worker_url() or '(not set)'}")
+        console.print(f"  selector: {cfg.selector}")
+
+
+@app.callback(invoke_without_command=True)
+def main(
+    ctx: typer.Context,
+    version: bool = typer.Option(False, "--version", "-v", help="Show version"),
+    debug: bool = typer.Option(False, "--debug", help="Enable debug output"),
+):
+    global _DEBUG
+    if debug:
+        _DEBUG = True
+    if version:
+        console.print(f"sni v{__version__}")
+        raise typer.Exit()
+    if ctx.invoked_subcommand is None:
+        # If no subcommand, treat first arg as search query for play
+        if ctx.args:
+            play(query=ctx.args[0], episode=1, quality=None, dub=_IS_DUB)
+        else:
+            console.print(f"[bold]SNI v{__version__}[/bold] — Stream Ninja Interface")
+            console.print("Usage: sni \"one piece\"  |  sni play \"one piece\"  |  sni tui  |  sni --help")
+
 
 if __name__ == "__main__":
     app()

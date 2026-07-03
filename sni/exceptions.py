@@ -1,44 +1,21 @@
+"""SNI exceptions — clean, actionable error messages."""
+
+
 class SNIError(Exception):
-    pass
+    """Base class for all SNI errors."""
 
 
-class ProviderError(SNIError):
-    pass
-
-
-class ProviderNotFoundError(ProviderError):
-    pass
-
-
-class ProviderHealthError(ProviderError):
-    pass
-
-
-class CaptchaRequiredError(ProviderError):
-    """Raised when a provider (typically AllAnime) demands a captcha/cookies.
-
-    Carries an actionable, human-readable ``hint`` describing how to recover.
-    """
-
-    def __init__(self, message: str = "Provider requires captcha.", hint: str = ""):
-        self.hint = hint or (
-            "All AllAnime endpoints + public proxy fallbacks were captcha-walled.\n"
-            "Two options:\n"
-            "  1. Browser cookies from a working mirror (NOT allanime.day which\n"
-            "     is broken with a redirect loop). Use allmanga.to or\n"
-            "     allanime.uns.bio, then:\n"
-            "       sni config --update allanime_cookies='cf_clearance=...;'\n"
-            "  2. Deploy the XAN CF Worker and save URL:\n"
-            "       sni config --update allanime_cf_worker_url='https://...'\n"
-            "     Can't use Cloudflare? Deno Deploy / Vercel / Netlify also work.\n"
-            "Run `sni config --cookie-info` for full step-by-step instructions."
-        )
-        super().__init__(f"{message}\n{self.hint}")
-
-
-class ConfigError(SNIError):
-    pass
+class SearchError(SNIError):
+    """Search failed."""
 
 
 class StreamError(SNIError):
-    pass
+    """Stream extraction or playback failed."""
+
+
+class PlayerError(SNIError):
+    """Player (mpv) error."""
+
+
+class ConfigError(SNIError):
+    """Configuration error."""
