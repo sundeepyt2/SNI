@@ -582,6 +582,11 @@ class AllAnimeProvider(Provider):
         """Extract a playable Stream from a (possibly-encoded) sourceUrl.
 
         Mirrors XAN's extractSource() dispatch logic.
+
+        IMPORTANT: When a CF Worker is configured, stream URLs are wrapped
+        through the worker so the user's blocked IP doesn't cause 403 errors
+        from the video CDN. The worker proxies the request with its own clean
+        IP, and we pass the original headers via h_ query params.
         """
         url = decode_url(raw_url)
         name = (source_name or "").lower()
@@ -597,6 +602,18 @@ class AllAnimeProvider(Provider):
                 stream.headers["Authorization"] = qs["Authorization"][0]
             stream.headers["Referer"] = self.REFERER
             stream.headers["Origin"] = self.ORIGIN
+            # If CF Worker is configured, wrap the stream URL through it so
+            # the user's blocked IP doesn't cause 403 from the video CDN.
+            # The Authorization header is already in the URL query string,
+            # so the worker will forward it. We pass Referer/Origin via h_ params.
+            if self.cf_worker_url and not self._worker_disabled:
+                worker_url = _build_cf_worker_url(
+                    self.cf_worker_url, url,
+                    extra_headers={"Referer": self.REFERER, "Origin": self.ORIGIN},
+                )
+                stream.url = worker_url
+                # Worker handles headers, so clear the per-request headers
+                stream.headers = {}
             return stream
 
         # clock.json family — S-mp4, Luf-mp4, Default, Sak, Wixmp, etc.
@@ -765,6 +782,14 @@ class AllAnimeProvider(Provider):
         stream = Stream(url=link_url, quality=str(res))
         stream.headers["Referer"] = self.REFERER
         stream.headers["Origin"] = self.ORIGIN
+        # Wrap through CF Worker if configured
+        if self.cf_worker_url and not self._worker_disabled:
+            worker_url = _build_cf_worker_url(
+                self.cf_worker_url, link_url,
+                extra_headers={"Referer": self.REFERER, "Origin": self.ORIGIN},
+            )
+            stream.url = worker_url
+            stream.headers = {}
         return stream
 
     async def _scrape_embed(
@@ -828,6 +853,18 @@ class AllAnimeProvider(Provider):
             stream = Stream(url=url, quality=quality)
             stream.headers["Referer"] = effective_embed_url
             stream.headers["Origin"] = self._origin_for(effective_embed_url)
+            # Wrap through CF Worker if configured — mp4upload CDN blocks
+            # many IPs with 403, and the worker's clean IP avoids this.
+            if self.cf_worker_url and not self._worker_disabled:
+                worker_url = _build_cf_worker_url(
+                    self.cf_worker_url, url,
+                    extra_headers={
+                        "Referer": effective_embed_url,
+                        "Origin": self._origin_for(effective_embed_url),
+                    },
+                )
+                stream.url = worker_url
+                stream.headers = {}
             return stream
 
         return None
