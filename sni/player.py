@@ -79,7 +79,10 @@ class Player:
         ):
             cmd.append("--demuxer-lavf-format=mp4")
             cmd.append("--demuxer-lavf-probesize=32000")
-            cmd.append("--demuxer-lavf-analyzeduration=2000000")
+            # analyzeduration is in MICROSECONDS, max 100000 (100ms).
+            # Higher values cause mpv to exit with a fatal error:
+            #   "The demuxer-lavf-analyzeduration option is out of range"
+            cmd.append("--demuxer-lavf-analyzeduration=100000")
 
         for key, val in stream.headers.items():
             # mpv's --http-header-fields expects "Key: Value" format
