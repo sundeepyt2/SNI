@@ -133,3 +133,34 @@ class Player:
         if self._process:
             self._process.terminate()
             self._process = None
+
+    # ─── IPC controls (require mpv --input-ipc-server) ──────────────────
+
+    def _send_ipc(self, command: str) -> bool:
+        """Send a raw IPC command to mpv."""
+        if not self.use_ipc:
+            return False
+        for _ in range(5):
+            try:
+                if os.path.exists(self.IPC_SOCKET):
+                    with open(self.IPC_SOCKET, "w") as sock:
+                        sock.write(command + "\n")
+                    return True
+            except OSError:
+                pass
+            import time
+            time.sleep(0.2)
+        return False
+
+    def next_episode(self) -> None:
+        self._send_ipc('playlist-next')
+
+    def prev_episode(self) -> None:
+        self._send_ipc('playlist-prev')
+
+    def reload(self) -> None:
+        self._send_ipc('reload')
+
+    def quit(self) -> None:
+        self._send_ipc('quit')
+        self.stop()
