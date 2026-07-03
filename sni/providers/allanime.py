@@ -774,6 +774,10 @@ class AllAnimeProvider(Provider):
 
         Used for mp4upload, filemoon, vidnest, vizcloud, mycloud — XAN does
         the same. Returns the first playable URL found (HLS preferred).
+
+        IMPORTANT: The Referer header for the PLAYBACK request must be the
+        embed page's URL (after redirects), NOT youtu-chan.com. mp4upload
+        specifically checks the Referer and returns 403 Forbidden otherwise.
         """
         if not embed_url.startswith("http"):
             return None
@@ -796,6 +800,10 @@ class AllAnimeProvider(Provider):
                 return None
 
             html = resp.text
+            # The effective embed URL after redirects (e.g. mp4upload.com → www.mp4upload.com).
+            # This MUST be used as the Referer when playing the extracted stream URL,
+            # otherwise mp4upload returns 403 Forbidden.
+            effective_embed_url = str(resp.url)
 
         # Unescape backslash-encoded URLs (common in JS embeds)
         def clean(u: str) -> str:
@@ -807,8 +815,10 @@ class AllAnimeProvider(Provider):
             if _ASSET_EXT.search(url):
                 continue
             stream = Stream(url=url, quality=quality)
-            stream.headers["Referer"] = self.REFERER
-            stream.headers["Origin"] = self.ORIGIN
+            # Use the embed URL as Referer — this is what mp4upload/filemoon/etc
+            # check. youtu-chan.com Referer causes 403 Forbidden on these CDNs.
+            stream.headers["Referer"] = effective_embed_url
+            stream.headers["Origin"] = self._origin_for(effective_embed_url)
             return stream
 
         for match in _MP4_RE.finditer(html):
@@ -816,11 +826,20 @@ class AllAnimeProvider(Provider):
             if _ASSET_EXT.search(url):
                 continue
             stream = Stream(url=url, quality=quality)
-            stream.headers["Referer"] = self.REFERER
-            stream.headers["Origin"] = self.ORIGIN
+            stream.headers["Referer"] = effective_embed_url
+            stream.headers["Origin"] = self._origin_for(effective_embed_url)
             return stream
 
         return None
+
+    @staticmethod
+    def _origin_for(url: str) -> str:
+        """Extract the Origin (scheme://host) from a URL."""
+        try:
+            parsed = urlparse(url)
+            return f"{parsed.scheme}://{parsed.netloc}"
+        except Exception:
+            return url
 
 
 ProviderRegistry.register(AllAnimeProvider)
