@@ -36,6 +36,7 @@ app = typer.Typer(
 )
 logger = setup_logger()
 console = Console()
+_DEBUG = False  # set to True by --debug flag
 
 
 def _resolve_cookies(provider_name: str, cfg: Config, cookie_flag: Optional[str]) -> str:
@@ -89,8 +90,9 @@ def main(
     ),
     debug: bool = typer.Option(False, "--debug", help="Enable debug logging"),
 ):
+    global logger, _DEBUG
     if debug:
-        global logger
+        _DEBUG = True
         logger = setup_logger(debug=True)
     if ctx.invoked_subcommand is None:
         asyncio.run(_interactive())
@@ -419,7 +421,7 @@ async def _watch_anime(
         start_idx = ep_list.index(chosen)
         ep_list = ep_list[start_idx:]
 
-    player = Player(player=cfg.player, use_ipc=cfg.use_ipc)
+    player = Player(player=cfg.player, use_ipc=cfg.use_ipc, debug=_DEBUG)
     if not player.available:
         typer.echo(f"{cfg.player} is not installed.")
         raise typer.Exit()
