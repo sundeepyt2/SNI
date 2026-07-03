@@ -50,6 +50,8 @@ class Config(BaseModel):
     def save(self, path: Optional[Path] = None) -> None:
         path = path or DEFAULT_CONFIG_PATH
         path.parent.mkdir(parents=True, exist_ok=True)
+        # Keys MUST match the model field names so Config.load() roundtrips
+        # correctly. The load() method flattens all sections into kwargs.
         data = {
             "player": {
                 "player": self.player,
@@ -57,7 +59,7 @@ class Config(BaseModel):
                 "use_ipc": self.use_ipc,
             },
             "allanime": {
-                "cf_worker_url": self.allanime_cf_worker_url,
+                "allanime_cf_worker_url": self.allanime_cf_worker_url,
             },
             "ui": {
                 "selector": self.selector,

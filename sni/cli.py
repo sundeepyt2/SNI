@@ -27,7 +27,7 @@ from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.table import Table
 
 from sni import __version__
-from sni.allanime import AllAnimeClient, Episode
+from sni.allanime import AllAnimeClient
 from sni.anilist import AnimeResult, search_anime
 from sni.config import DEFAULT_CONFIG_PATH, Config
 from sni.exceptions import PlayerError, StreamError
@@ -97,42 +97,6 @@ def _select_anime(results: list[AnimeResult]) -> Optional[AnimeResult]:
     return None
 
 
-def _select_episode_range(episodes: list[Episode], title: str) -> tuple[int, int]:
-    """Let user select an episode or range. Returns (start_idx, end_idx) inclusive."""
-    if not episodes:
-        return (0, 0)
-
-    console.print(f"\n[bold green]{title}[/bold green] — {len(episodes)} episodes")
-    console.print("[dim]Enter episode number (e.g. 5) or range (e.g. 1-12)[/dim]")
-    choice = Prompt.ask("Episode", default="1")
-
-    try:
-        if "-" in choice:
-            parts = choice.split("-")
-            start_num = int(parts[0])
-            end_num = int(parts[1])
-        else:
-            start_num = int(choice)
-            end_num = start_num  # just one episode
-    except ValueError:
-        start_num = 1
-        end_num = 1
-
-    # Find indices
-    start_idx = 0
-    end_idx = len(episodes) - 1
-    for i, ep in enumerate(episodes):
-        if ep.number >= start_num:
-            start_idx = i
-            break
-    for i, ep in enumerate(episodes):
-        if ep.number >= end_num:
-            end_idx = i
-            break
-
-    return (start_idx, end_idx)
-
-
 async def _play_anime(
     anime: AnimeResult,
     start_ep: int = 1,
@@ -149,17 +113,20 @@ async def _play_anime(
         return
 
     show_id = aa_results[0]["id"]
-    episodes = await client.get_episodes(show_id)
+    episodes = await client.get_episodes(show_id, dub=dub)
     if not episodes:
         console.print("[red]No episodes found.[/red]")
         return
 
-    # Find start index
-    start_idx = 0
+    # Find start index — if the requested episode doesn't exist, play nothing
+    start_idx = None
     for i, ep in enumerate(episodes):
         if ep.number >= start_ep:
             start_idx = i
             break
+    if start_idx is None:
+        console.print(f"[red]Episode {start_ep} not found. This anime has episodes 1-{episodes[-1].number}.[/red]")
+        return
 
     # Find end index
     if end_ep:

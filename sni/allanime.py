@@ -268,13 +268,22 @@ class AllAnimeClient:
             for e in edges
         ]
 
-    async def get_episodes(self, show_id: str) -> List[Episode]:
-        """Get episode list for an AllAnime show."""
+    async def get_episodes(self, show_id: str, dub: bool = False) -> List[Episode]:
+        """Get episode list for an AllAnime show.
+
+        When dub=True, returns dubbed episode numbers instead of subbed.
+        """
         gql = "query($id:String!){show(_id:$id){availableEpisodesDetail}}"
         variables = {"id": show_id}
         data = await self._post_graphql(gql, variables)
         detail = (data.get("data") or {}).get("show", {}).get("availableEpisodesDetail", {})
-        ep_nums = detail.get("sub", [])
+        # Use "dub" key for dub mode, "sub" for sub mode
+        key = "dub" if dub else "sub"
+        ep_nums = detail.get(key, [])
+        # If dub list is empty but user wants dub, fall back to sub list
+        # (the stream API will report "dub not available" if truly absent)
+        if not ep_nums and dub:
+            ep_nums = detail.get("sub", [])
         episodes = []
         for ep_str in ep_nums:
             try:

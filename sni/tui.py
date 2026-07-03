@@ -117,7 +117,7 @@ def run_tui():
                 return
 
             show_id = aa_results[0]["id"]
-            self.episodes = await self.client.get_episodes(show_id)
+            self.episodes = await self.client.get_episodes(show_id)  # sub mode for TUI
             if not self.episodes:
                 self.query_one("#ep-info", Static).update("[red]No episodes found.[/red]")
                 return
@@ -139,7 +139,9 @@ def run_tui():
             if self.episodes and event.list_view.index is not None:
                 idx = event.list_view.index
                 if 0 <= idx < len(self.episodes):
-                    self.run_worker(self.play_episode(idx))
+                    # Play single episode (start=end=selected episode number)
+                    ep_num = self.episodes[idx].number
+                    self.run_worker(self.play_range(idx, ep_num))
 
         def play_from_input(self, value: str):
             try:
@@ -167,6 +169,7 @@ def run_tui():
             history = WatchHistory()
 
             ep_list = self.episodes[start_idx:]
+            loop = asyncio.get_event_loop()
             for i, ep in enumerate(ep_list):
                 if ep.number > end_ep:
                     break
@@ -180,7 +183,9 @@ def run_tui():
                         ep.id, quality=cfg.quality
                     )
                     player.play(stream, cfg.quality)
-                    player.wait()
+                    # Run player.wait() in a thread so the Textual event loop
+                    # doesn't freeze during playback.
+                    await loop.run_in_executor(None, player.wait)
                 except Exception as e:
                     console.print(f"[red]{e}[/red]")
 
@@ -189,8 +194,10 @@ def run_tui():
                 history.add(self.anime.id, self.anime.title, ep.number,
                            len(self.episodes))
 
-                if i < len(ep_list) - 1 and ep.number < end_ep:
-                    continue  # auto-next for ranges
+                # For single-episode play (start==end), stop after one
+                # For ranges, auto-continue to next episode
+                if ep.number >= end_ep:
+                    break
 
     class PlayerOverlay(ModalScreen):
         """Player overlay with controls."""
