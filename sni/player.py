@@ -64,6 +64,23 @@ class Player:
             "--stream-buffer-size=4096",  # larger read buffer
         ]
 
+        # AllAnime stream URLs return content-type: application/octet-stream
+        # and have no file extension (e.g. /sub/1?Authorization=...). mpv
+        # can't auto-detect the format from that, so it exits with code 2.
+        # Force the MP4 demuxer when the URL looks like an AllAnime stream.
+        # This is the actual fix for the "mpv exited with code 2" issue.
+        url_lower = stream.url.lower()
+        if (
+            "tools.fast4speed.rsvp" in url_lower
+            or "/media" in url_lower
+            or "fast4speed" in url_lower
+            or "allanime" in url_lower
+            or "allmanga" in url_lower
+        ):
+            cmd.append("--demuxer-lavf-format=mp4")
+            cmd.append("--demuxer-lavf-probesize=32000")
+            cmd.append("--demuxer-lavf-analyzeduration=2000000")
+
         for key, val in stream.headers.items():
             # mpv's --http-header-fields expects "Key: Value" format
             cmd.append(f"--http-header-fields={key}: {val}")
